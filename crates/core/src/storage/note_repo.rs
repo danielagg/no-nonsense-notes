@@ -1,38 +1,57 @@
-use loro::{ExportMode, LoroDoc};
+use loro::{ExportMode, LoroDoc, LoroValue, ToJson};
 use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use crate::note::{Note, NoteId};
+use crate::note::{Note, NoteId, NoteType};
 use crate::StorageError;
 
 pub struct NoteRepository<'a> {
     conn: &'a Connection,
 }
 
+const SELECT_COLS: &str = "id, folder_id, note_type, title, content_plaintext, content_loro_blob, content_hash, created_at, updated_at, is_deleted, deleted_at, sort_order";
+
+const SELECT_COLS_N: &str = "n.id, n.folder_id, n.note_type, n.title, n.content_plaintext, n.content_loro_blob, n.content_hash, n.created_at, n.updated_at, n.is_deleted, n.deleted_at, n.sort_order";
+
 impl<'a> NoteRepository<'a> {
     pub fn new(conn: &'a Connection) -> Self {
         Self { conn }
     }
 
-    pub fn create(&self, folder_id: Option<NoteId>) -> Result<Note, StorageError> {
+    pub fn create(
+        &self,
+        note_type: NoteType,
+        folder_id: Option<NoteId>,
+    ) -> Result<Note, StorageError> {
         let id = NoteId::now_v7();
         let now = chrono::Utc::now();
 
         let doc = LoroDoc::new();
-        doc.get_text("content");
+        match note_type {
+            NoteType::Markdown => {
+                doc.get_text("content");
+            }
+            NoteType::List => {
+                doc.get_list("items");
+            }
+        }
         let loro_blob = doc
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
 
         let content_plaintext = String::new();
         let content_hash = Sha256::digest(content_plaintext.as_bytes()).to_vec();
-        let title = Note::derive_title(&content_plaintext);
+        let title = match note_type {
+            NoteType::Markdown => Note::derive_title(&content_plaintext),
+            NoteType::List => "List".to_string(),
+        };
 
         self.conn.execute(
-            "INSERT INTO notes (id, folder_id, title, content_plaintext, content_loro_blob, content_hash, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO notes (id, folder_id, note_type, title, content_plaintext, content_loro_blob, content_hash, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 id.to_string(),
                 folder_id.map(|f| f.to_string()),
+                note_type.as_str(),
                 title,
                 content_plaintext,
                 loro_blob,
@@ -50,41 +69,26 @@ impl<'a> NoteRepository<'a> {
 
     pub fn get(&self, id: NoteId) -> Result<Note, StorageError> {
         let id_str = id.to_string();
-        self.conn
-            .query_row(
-                "SELECT id, folder_id, title, content_plaintext, content_loro_blob, content_hash, created_at, updated_at, is_deleted, deleted_at, sort_order FROM notes WHERE id = ?1",
-                params![id_str],
-                |row| {
-                    let folder_id: Option<String> = row.get(1)?;
-                    let is_deleted: bool = row.get(8)?;
-                    let deleted_at: Option<String> = row.get(9)?;
-
-                    Ok(Note {
-                        id: row.get::<_, String>(0)?.parse().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-                        folder_id: folder_id
-                            .map(|s| s.parse())
-                            .transpose()
-                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-                        title: row.get(2)?,
-                        content_plaintext: row.get(3)?,
-                        content_loro_blob: row.get(4)?,
-                        content_hash: row.get(5)?,
-                        created_at: row.get::<_, String>(6)?.parse().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-                        updated_at: row.get::<_, String>(7)?.parse().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-                        is_deleted,
-                        deleted_at: deleted_at
-                            .map(|s| s.parse())
-                            .transpose()
-                            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-                        sort_order: row.get(10)?,
-                    })
-                },
-            )
-            .map_err(StorageError::from)
+        let result = self.conn.query_row(
+            &format!("SELECT {SELECT_COLS} FROM notes WHERE id = ?1"),
+            params![id_str],
+            row_to_note,
+        );
+        match result {
+            Ok(note) => Ok(note),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Err(StorageError::NotFound { id: id_str }),
+            Err(e) => Err(e.into()),
+        }
     }
 
     pub fn update(&self, id: NoteId, new_content: &str) -> Result<Note, StorageError> {
         let existing = self.get(id)?;
+        if existing.note_type != NoteType::Markdown {
+            return Err(StorageError::WrongNoteType {
+                expected: "markdown".to_string(),
+                actual: existing.note_type.as_str().to_string(),
+            });
+        }
 
         let doc = if existing.content_loro_blob.is_empty() {
             LoroDoc::new()
@@ -117,6 +121,87 @@ impl<'a> NoteRepository<'a> {
         self.get(id)
     }
 
+    pub fn list_add_item(&self, id: NoteId, item: &str) -> Result<Note, StorageError> {
+        let existing = self.get(id)?;
+        if existing.note_type != NoteType::List {
+            return Err(StorageError::WrongNoteType {
+                expected: "list".to_string(),
+                actual: existing.note_type.as_str().to_string(),
+            });
+        }
+
+        let doc = LoroDoc::from_snapshot(&existing.content_loro_blob)
+            .map_err(|e| StorageError::Loro(format!("failed to load Loro doc: {e}")))?;
+        let list = doc.get_list("items");
+        list.push(item)
+            .map_err(|e| StorageError::Loro(format!("failed to push list item: {e}")))?;
+
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
+
+        let items = list_items_from_doc(&doc);
+        let plaintext = items.join("\n");
+        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+        let title = list_title(&items);
+        let now = chrono::Utc::now();
+
+        self.conn.execute(
+            "UPDATE notes SET title = ?1, content_plaintext = ?2, content_loro_blob = ?3, content_hash = ?4, updated_at = ?5 WHERE id = ?6",
+            params![title, plaintext, loro_blob, content_hash, now.to_rfc3339(), id.to_string()],
+        )?;
+
+        if let Some(rowid) = self.get_rowid(id)? {
+            self.sync_fts(rowid, &title, &plaintext)?;
+        }
+
+        self.get(id)
+    }
+
+    pub fn list_remove_item(&self, id: NoteId, item: &str) -> Result<Note, StorageError> {
+        let existing = self.get(id)?;
+        if existing.note_type != NoteType::List {
+            return Err(StorageError::WrongNoteType {
+                expected: "list".to_string(),
+                actual: existing.note_type.as_str().to_string(),
+            });
+        }
+
+        let doc = LoroDoc::from_snapshot(&existing.content_loro_blob)
+            .map_err(|e| StorageError::Loro(format!("failed to load Loro doc: {e}")))?;
+        let list = doc.get_list("items");
+
+        let pos = list_items_from_doc(&doc)
+            .iter()
+            .position(|v| v == item)
+            .ok_or_else(|| StorageError::NotFound {
+                id: format!("list item: {item}"),
+            })?;
+        list.delete(pos, 1)
+            .map_err(|e| StorageError::Loro(format!("failed to delete list item: {e}")))?;
+
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
+
+        let items = list_items_from_doc(&doc);
+        let plaintext = items.join("\n");
+        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+        let title = list_title(&items);
+        let now = chrono::Utc::now();
+
+        self.conn.execute(
+            "UPDATE notes SET title = ?1, content_plaintext = ?2, content_loro_blob = ?3, content_hash = ?4, updated_at = ?5 WHERE id = ?6",
+            params![title, plaintext, loro_blob, content_hash, now.to_rfc3339(), id.to_string()],
+        )?;
+
+        if let Some(rowid) = self.get_rowid(id)? {
+            self.sync_fts(rowid, &title, &plaintext)?;
+        }
+
+        self.get(id)
+    }
+
     pub fn soft_delete(&self, id: NoteId) -> Result<(), StorageError> {
         let now = chrono::Utc::now();
         self.conn.execute(
@@ -132,26 +217,29 @@ impl<'a> NoteRepository<'a> {
     }
 
     pub fn list(&self, folder_id: Option<NoteId>) -> Result<Vec<Note>, StorageError> {
-        let sql = "SELECT id, folder_id, title, content_plaintext, content_loro_blob, content_hash, created_at, updated_at, is_deleted, deleted_at, sort_order \
-                   FROM notes WHERE is_deleted = 0 \
-                   AND (?1 IS NULL OR folder_id = ?1) \
-                   ORDER BY updated_at DESC";
+        let sql = format!(
+            "SELECT {SELECT_COLS} \
+               FROM notes WHERE is_deleted = 0 \
+               AND (?1 IS NULL OR folder_id = ?1) \
+               ORDER BY updated_at DESC"
+        );
 
-        let mut stmt = self.conn.prepare(sql)?;
+        let mut stmt = self.conn.prepare(&sql)?;
         let folder_str = folder_id.map(|f| f.to_string());
         let rows = stmt.query_map(params![folder_str], row_to_note)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(StorageError::from)
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<Note>, StorageError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT n.id, n.folder_id, n.title, n.content_plaintext, n.content_loro_blob, n.content_hash, n.created_at, n.updated_at, n.is_deleted, n.deleted_at, n.sort_order \
-             FROM notes_fts \
-             JOIN notes n ON notes_fts.rowid = n.rowid \
-             WHERE notes_fts MATCH ?1 AND n.is_deleted = 0 \
-             ORDER BY rank",
-        )?;
+        let sql = format!(
+            "SELECT {SELECT_COLS_N} \
+              FROM notes_fts \
+              JOIN notes n ON notes_fts.rowid = n.rowid \
+              WHERE notes_fts MATCH ?1 AND n.is_deleted = 0 \
+              ORDER BY rank"
+        );
 
+        let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![query], row_to_note)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(StorageError::from)
     }
@@ -179,23 +267,80 @@ impl<'a> NoteRepository<'a> {
     }
 }
 
+fn list_items_from_doc(doc: &LoroDoc) -> Vec<String> {
+    let list = doc.get_list("items");
+    list.to_vec()
+        .into_iter()
+        .map(|v| match v {
+            LoroValue::String(s) => s.to_string(),
+            other => other.to_json_value().to_string(),
+        })
+        .collect()
+}
+
+fn list_title(items: &[String]) -> String {
+    items.first().cloned().unwrap_or_else(|| "List".to_string())
+}
+
+fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
+    let folder_id: Option<String> = row.get(1)?;
+    let note_type_str: String = row.get(2)?;
+    let is_deleted: bool = row.get(9)?;
+    let deleted_at: Option<String> = row.get(10)?;
+
+    let note_type: NoteType = note_type_str
+        .parse()
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(crate::StorageError::Parse(e))))?;
+
+    Ok(Note {
+        id: row.get::<_, String>(0)?.parse().map_err(|e: uuid::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        folder_id: folder_id.map(|s| s.parse()).transpose().map_err(|e: uuid::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        note_type,
+        title: row.get(3)?,
+        content_plaintext: row.get(4)?,
+        content_loro_blob: row.get(5)?,
+        content_hash: row.get(6)?,
+        created_at: row.get::<_, String>(7)?.parse().map_err(|e: chrono::ParseError| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        updated_at: row.get::<_, String>(8)?.parse().map_err(|e: chrono::ParseError| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        is_deleted,
+        deleted_at: deleted_at.map(|s| s.parse()).transpose().map_err(|e: chrono::ParseError| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        sort_order: row.get(11)?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::sqlite::Database;
 
     #[test]
-    fn create_and_get() {
+    fn create_markdown_and_get() {
         let db = Database::open_in_memory().unwrap();
         let repo = NoteRepository::new(db.connection());
 
-        let note = repo.create(None).unwrap();
+        let note = repo.create(NoteType::Markdown, None).unwrap();
+        assert_eq!(note.note_type, NoteType::Markdown);
         assert_eq!(note.title, "Untitled");
         assert!(!note.content_loro_blob.is_empty());
 
         let fetched = repo.get(note.id).unwrap();
         assert_eq!(fetched.id, note.id);
         assert_eq!(fetched.title, "Untitled");
+        assert_eq!(fetched.note_type, NoteType::Markdown);
+    }
+
+    #[test]
+    fn create_list_and_get() {
+        let db = Database::open_in_memory().unwrap();
+        let repo = NoteRepository::new(db.connection());
+
+        let note = repo.create(NoteType::List, None).unwrap();
+        assert_eq!(note.note_type, NoteType::List);
+        assert_eq!(note.title, "List");
+        assert!(note.content_plaintext.is_empty());
+
+        let fetched = repo.get(note.id).unwrap();
+        assert_eq!(fetched.note_type, NoteType::List);
     }
 
     #[test]
@@ -212,7 +357,7 @@ mod tests {
         )
         .unwrap();
 
-        let note = repo.create(Some(folder_id)).unwrap();
+        let note = repo.create(NoteType::Markdown, Some(folder_id)).unwrap();
         assert_eq!(note.folder_id, Some(folder_id));
     }
 
@@ -223,7 +368,7 @@ mod tests {
         crate::storage::migrations::run(&conn).unwrap();
         let repo = NoteRepository::new(&conn);
 
-        let note = repo.create(None).unwrap();
+        let note = repo.create(NoteType::Markdown, None).unwrap();
         let updated = repo
             .update(note.id, "# Meeting Notes\n\nLorum ipsum.")
             .unwrap();
@@ -237,15 +382,102 @@ mod tests {
         crate::storage::migrations::run(&conn).unwrap();
         let repo = NoteRepository::new(&conn);
 
-        let note = repo.create(None).unwrap();
+        let note = repo.create(NoteType::Markdown, None).unwrap();
         let content = "# Hello\n\nThis is **bold** and *italic*.";
         let updated = repo.update(note.id, content).unwrap();
         assert_eq!(updated.content_plaintext, content);
         assert_eq!(updated.title, "Hello");
 
-        // Verify Loro doc loads from blob and content matches
         let doc = LoroDoc::from_snapshot(&updated.content_loro_blob).unwrap();
         assert_eq!(doc.get_text("content").to_string(), content);
+    }
+
+    #[test]
+    fn update_rejects_list_type() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::List, None).unwrap();
+        let err = repo.update(note.id, "# Hello").unwrap_err();
+        assert!(matches!(err, StorageError::WrongNoteType { .. }));
+    }
+
+    #[test]
+    fn list_add_and_remove() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::List, None).unwrap();
+        let id = note.id;
+
+        repo.list_add_item(id, "milk").unwrap();
+        repo.list_add_item(id, "eggs").unwrap();
+        repo.list_add_item(id, "bread").unwrap();
+
+        let note = repo.get(id).unwrap();
+        assert_eq!(note.content_plaintext, "milk\neggs\nbread");
+        assert_eq!(note.title, "milk");
+
+        let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
+        let list = doc.get_list("items");
+        assert_eq!(list.len(), 3);
+
+        let note = repo.list_remove_item(id, "eggs").unwrap();
+        assert_eq!(note.content_plaintext, "milk\nbread");
+
+        let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
+        let list = doc.get_list("items");
+        assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn list_remove_missing_errors() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::List, None).unwrap();
+        repo.list_add_item(note.id, "milk").unwrap();
+
+        let err = repo.list_remove_item(note.id, "nope").unwrap_err();
+        assert!(matches!(err, StorageError::NotFound { .. }));
+    }
+
+    #[test]
+    fn list_add_rejects_markdown() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::Markdown, None).unwrap();
+        let err = repo.list_add_item(note.id, "milk").unwrap_err();
+        assert!(matches!(err, StorageError::WrongNoteType { .. }));
+    }
+
+    #[test]
+    fn list_items_searchable() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let n1 = repo.create(NoteType::List, None).unwrap();
+        repo.list_add_item(n1.id, "milk").unwrap();
+        repo.list_add_item(n1.id, "eggs").unwrap();
+
+        let n2 = repo.create(NoteType::Markdown, None).unwrap();
+        repo.update(n2.id, "Meeting with Alice").unwrap();
+
+        let results = repo.search("milk").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, n1.id);
+        assert_eq!(results[0].note_type, NoteType::List);
     }
 
     #[test]
@@ -255,7 +487,7 @@ mod tests {
         crate::storage::migrations::run(&conn).unwrap();
         let repo = NoteRepository::new(&conn);
 
-        let note = repo.create(None).unwrap();
+        let note = repo.create(NoteType::Markdown, None).unwrap();
         repo.soft_delete(note.id).unwrap();
 
         let list = repo.list(None).unwrap();
@@ -269,9 +501,9 @@ mod tests {
         crate::storage::migrations::run(&conn).unwrap();
         let repo = NoteRepository::new(&conn);
 
-        repo.create(None).unwrap();
-        repo.create(None).unwrap();
-        repo.create(None).unwrap();
+        repo.create(NoteType::Markdown, None).unwrap();
+        repo.create(NoteType::List, None).unwrap();
+        repo.create(NoteType::Markdown, None).unwrap();
 
         let list = repo.list(None).unwrap();
         assert_eq!(list.len(), 3);
@@ -291,9 +523,9 @@ mod tests {
         )
         .unwrap();
 
-        repo.create(None).unwrap();
-        repo.create(Some(folder_id)).unwrap();
-        repo.create(Some(folder_id)).unwrap();
+        repo.create(NoteType::Markdown, None).unwrap();
+        repo.create(NoteType::List, Some(folder_id)).unwrap();
+        repo.create(NoteType::Markdown, Some(folder_id)).unwrap();
 
         let all = repo.list(None).unwrap();
         assert_eq!(all.len(), 3);
@@ -309,9 +541,9 @@ mod tests {
         crate::storage::migrations::run(&conn).unwrap();
         let repo = NoteRepository::new(&conn);
 
-        let n1 = repo.create(None).unwrap();
+        let n1 = repo.create(NoteType::Markdown, None).unwrap();
         repo.update(n1.id, "Groceries: milk and eggs").unwrap();
-        let n2 = repo.create(None).unwrap();
+        let n2 = repo.create(NoteType::Markdown, None).unwrap();
         repo.update(n2.id, "Meeting with Alice").unwrap();
 
         let results = repo.search("Groceries").unwrap();
@@ -326,31 +558,23 @@ mod tests {
         crate::storage::migrations::run(&conn).unwrap();
         let repo = NoteRepository::new(&conn);
 
-        let note = repo.create(None).unwrap();
+        let note = repo.create(NoteType::Markdown, None).unwrap();
         repo.update(note.id, "Important stuff").unwrap();
         repo.soft_delete(note.id).unwrap();
 
         let results = repo.search("Important").unwrap();
         assert!(results.is_empty());
     }
-}
 
-fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
-    let folder_id: Option<String> = row.get(1)?;
-    let is_deleted: bool = row.get(8)?;
-    let deleted_at: Option<String> = row.get(9)?;
+    #[test]
+    fn get_missing_returns_not_found() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
 
-    Ok(Note {
-        id: row.get::<_, String>(0)?.parse().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        folder_id: folder_id.map(|s| s.parse()).transpose().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        title: row.get(2)?,
-        content_plaintext: row.get(3)?,
-        content_loro_blob: row.get(4)?,
-        content_hash: row.get(5)?,
-        created_at: row.get::<_, String>(6)?.parse().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        updated_at: row.get::<_, String>(7)?.parse().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        is_deleted,
-        deleted_at: deleted_at.map(|s| s.parse()).transpose().map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        sort_order: row.get(10)?,
-    })
+        let id = NoteId::now_v7();
+        let err = repo.get(id).unwrap_err();
+        assert!(matches!(err, StorageError::NotFound { .. }));
+    }
 }

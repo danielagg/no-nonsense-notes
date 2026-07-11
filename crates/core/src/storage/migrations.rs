@@ -13,10 +13,11 @@ struct Migration {
     sql: &'static str,
 }
 
-const MIGRATIONS: &[Migration] = &[Migration {
-    version: 1,
-    description: "create notes, folders, tags, note_tags, settings tables",
-    sql: r#"
+const MIGRATIONS: &[Migration] = &[
+    Migration {
+        version: 1,
+        description: "create notes, folders, tags, note_tags, settings tables",
+        sql: r#"
         CREATE TABLE notes (
             id                  TEXT PRIMARY KEY,
             folder_id           TEXT REFERENCES folders(id),
@@ -59,7 +60,13 @@ const MIGRATIONS: &[Migration] = &[Migration {
             title, content_plaintext
         );
     "#,
-}];
+    },
+    Migration {
+        version: 2,
+        description: "add note_type column to notes",
+        sql: "ALTER TABLE notes ADD COLUMN note_type TEXT NOT NULL DEFAULT 'markdown';",
+    },
+];
 
 pub fn run(conn: &Connection) -> Result<i64, crate::StorageError> {
     conn.execute_batch(SCHEMA_VERSION_TABLE)?;
@@ -102,7 +109,7 @@ mod tests {
     fn migrations_apply_in_order() {
         let conn = Connection::open_in_memory().unwrap();
         let version = run(&conn).unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
     }
 
     #[test]
