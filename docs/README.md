@@ -4,7 +4,7 @@ Local-first, E2E-encrypted, markdown notes. Fast above everything.
 Solo-dev project.
 
 | Doc | What's in it |
-|---|---|---|
+|---|---|
 | [tech-stack.md](tech-stack.md) | Stack overview: storage, Rust core, threading, native apps, backend, architecture |
 | [roadmap.md](roadmap.md) | Phases 0-2b-3, deliverables, exit criteria, post-v1 list |
 | [security.md](security.md) | E2E encryption, auth & key derivation, device pairing, key recovery |
