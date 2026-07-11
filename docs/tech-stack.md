@@ -1,5 +1,13 @@
 # No Nonsense Notes -- Tech Stack
 
+Overview document. Deep dives live in their own files:
+
+- [roadmap.md](roadmap.md) -- phases, deliverables, exit criteria
+- [security.md](security.md) -- E2E encryption, auth, key management
+- [sync.md](sync.md) -- CRDT (Loro), sync protocol, tombstones,
+  migrations
+- [editor.md](editor.md) -- editor architecture, markdown support
+
 ## Philosophy
 
 - Local-first
@@ -13,47 +21,33 @@
 
 ## Client Storage
 
-- SQLite
+- SQLite -- the source of truth on every device
 - SQLite FTS5 for full-text search
 - One SQLite database per device
-- One Automerge document per note
-- Metadata (folders, tags, settings, etc.) stored separately from note documents
-
-## Sync
-
-- **Automerge** (CRDT)
-- **Automerge Sync Protocol**
-- Authenticated **WebSockets** as the transport
-- Delta-based synchronization handled by Automerge
-- Rust relay server using a store-and-forward model
-- Background sync, batching, and compression
-- Fast reconnect and offline queueing
+- One Loro document per note (stored as blobs in SQLite)
+- One Loro "workspace" document for all metadata (folders, tags,
+  note metadata, settings)
+- Details: [sync.md](sync.md)
 
 ## Shared Core (Rust)
 
 ### Core Libraries
 
-- Tokio
-- Automerge
+- loro
 - rusqlite
 - UniFFI
-- pulldown-cmark
+- tungstenite (blocking WebSocket client on a dedicated thread --
+  no async runtime in the client core; Tokio lives server-side only)
+- pulldown-cmark (preview rendering, export, and syntax spans for
+  editor highlighting)
 - serde
-- serde_json
+- serde_json (scoped: import/export and config only -- the sync wire
+  format is raw encrypted bytes, no JSON)
 - tracing
-- anyhow
-- thiserror
-
-### Cryptography (RustCrypto)
-
-- chacha20poly1305
-- x25519-dalek
-- ed25519-dalek
-- argon2
-- hkdf
-- sha2
+- thiserror (typed errors; also required for UniFFI error enums
+  across the FFI boundary)
 - zeroize
-- getrandom
+- RustCrypto crates: see [security.md](security.md)
 
 ### Responsibilities
 
@@ -68,20 +62,22 @@
 
 ## Native Apps
 
-### macOS
+Thin presentation layers over the Rust core. Editor details:
+[editor.md](editor.md).
 
-- SwiftUI
-- Rust via UniFFI
-
-### iOS
-
-- SwiftUI
-- Rust via UniFFI
-
-### Android
+### Android (Phase 1)
 
 - Jetpack Compose
-- Rust via UniFFI
+- Rust via UniFFI (Kotlin bindings, NDK build)
+
+### macOS (Phase 3)
+
+- SwiftUI (chrome) + TextKit 2 editor
+- Rust via UniFFI (Swift package)
+
+### iOS (Later)
+
+- SwiftUI (chrome) + TextKit 2 editor -- cheap after macOS
 
 ### Web (Later)
 
@@ -91,128 +87,100 @@
 
 ## Backend
 
-**Rust**
+**Rust** -- one single-binary process on a cheap VPS. Intentionally
+"dumb": it authenticates clients, appends encrypted blobs, and streams
+them to devices without understanding document contents.
 
 ### Libraries
 
 - Axum
 - Tokio
 - tokio-tungstenite
-- SQLx
+- rusqlite (same crate as the client core)
+- anyhow (application-level error handling; the core library uses
+  thiserror)
 
 ### Database
 
-- PostgreSQL (accounts, devices, sync metadata)
+- **SQLite** (accounts, devices, sync metadata, encrypted update logs)
+- Continuous backup via Litestream (or equivalent WAL streaming)
+- No PostgreSQL: the server only stores accounts and opaque encrypted
+  blobs; SQLite handles this scale for years, zero DB ops for a solo dev
+
+### TLS / Ingress
+
+- **Caddy** reverse proxy in front of Axum -- automatic Let's Encrypt
+  certificates, zero TLS code
 
 ### Responsibilities
 
 - Authentication
 - Device management
 - WebSocket connections
-- Relay Automerge sync messages
-- Store encrypted updates
-- Push updates to connected devices
+- Persist encrypted update logs (append-only, per document)
+- Push new updates to connected devices
 
-> The backend never interprets note contents or implements CRDT logic --
-> it authenticates clients, persists encrypted updates, and relays
-> Automerge sync messages.
+## Phases
 
-## Security
+See [roadmap.md](roadmap.md). Short version: Phase 0 Rust core (local
+only) -> Phase 1 Android app (local only) -> Phase 2 sync + E2E ->
+Phase 3 macOS = v1. iOS and Web later.
 
-- End-to-end encryption
-- Client-side encryption before sync
-- Server cannot read note contents
-- Multi-device key management
-- Secure key derivation (Argon2 + HKDF)
-- Memory zeroization for sensitive material
+## Costs (accepted)
 
-## Markdown
+- Apple Developer Program: $99/year (required for notarized
+  distribution; cost starts in Phase 3, not before)
+- One small VPS for the sync server
+- Everything else: free and open source. Android distributed via
+  F-Droid / direct APK (Play optional).
 
-Native note format.
+## Tooling / CI
 
-Renderer:
-
-- pulldown-cmark
-
-Supported in v1:
-
-- Headings
-- Bold / Italic
-- Lists
-- Checklists
-- Blockquotes
-- Tables
-- Code blocks
-- Links
-- Horizontal rules
-
-## Platforms
-
-- macOS
-- iOS
-- Android
-- Web (later)
-
-## Future (Post-v1)
-
-- Attachments
-- Image support
-- Shared notebooks
-- Real-time collaborative editing
-- Linux
-- Windows
+- GitHub Actions (free tier)
+- Rust core is ~90% of the logic and tests on Linux runners: unit
+  tests, sync round-trip tests, crypto tests, benchmarks
+- Platform UI builds: Linux runner for Android, macOS runner for Swift
 
 ## Architecture
 
 ```text
-                    SwiftUI              Jetpack Compose            Web (WASM)
+              Jetpack Compose          SwiftUI + TextKit 2         Web (WASM)
                        │                        │                        │
-                   UniFFI                  UniFFI                 JS bindings
+                   UniFFI                   UniFFI                JS bindings
                        └──────────────┬─────────┴──────────────┐
                                       │
                            Shared Rust Core
     ┌─────────────────────────────────────────────────────────────────────┐
-    │ SQLite │ Automerge │ Sync │ Encryption │ Search │ Markdown │ Import │
+    │  SQLite │ Loro │ Sync │ Encryption │ Search │ Markdown │ Import     │
     └─────────────────────────────────────────────────────────────────────┘
                                       │
-                           Automerge Sync Protocol
+                    Encrypted change-log protocol (own, thin)
                                       │
-                        Authenticated WebSockets
+                        Authenticated WebSockets (via Caddy/TLS)
                                       │
                          Rust Backend (Axum/Tokio)
                                       │
-          PostgreSQL (accounts/devices/metadata) + Encrypted Sync Storage
+              SQLite (accounts / devices / encrypted update logs)
 ```
 
 ## Design Principles
 
 - **SQLite** is the source of truth on every device.
-- **Automerge** handles conflict resolution and synchronization.
-- **Rust** contains all business logic and is shared across every platform.
+- **Loro** handles conflict resolution; sync is just moving encrypted
+  Loro updates around.
+- **Rust** contains all business logic and is shared across every
+  platform.
 - **Native UIs** are thin presentation layers.
-- **The backend is intentionally "dumb"**: it authenticates users, stores
-  encrypted data, and relays Automerge sync messages without understanding
-  document contents. This keeps the system simpler, more secure, and easier
-  to maintain.
+- **The backend is intentionally "dumb"**: simpler, more secure,
+  easier to maintain.
 
-## Open Questions / Watch-Outs
+## Watch-Outs
 
-These aren't stack changes, just items worth deciding on explicitly before
-or during v1 build-out:
+Topic-specific open questions live in their files
+([security.md](security.md), [sync.md](sync.md)). One cross-cutting
+item stays here:
 
-- **Local at-rest encryption.** The current plan encrypts note content
-  before it leaves the device (in transit / on the server), but SQLite on
-  disk is plaintext -- which is what lets FTS5 index it directly. Decide
-  now whether a lost/stolen device is in scope for your threat model. If
-  so, this needs a deliberate design (e.g. OS-level keychain-backed
-  encryption at rest) rather than a retrofit later.
-- **Multi-device key management.** This is the least-specified part of the
-  plan and the hardest problem in it -- how a second device gets the keys
-  without the server ever seeing them. Worth a short dedicated design pass
-  (QR-code pairing vs. recovery phrase vs. key-transparency log) before
-  writing code against it.
 - **SQLite + WASM (deferred).** `rusqlite`'s bundled SQLite compiles to
-  `wasm32` less cleanly than the pure-Rust crypto crates do -- it needs a
-  WASM-capable C toolchain rather than a plain `cargo build`. Solvable
-  (prior art: `wa-sqlite`, sql.js), and not a v1 concern since Web is
-  scheduled for later, but flagging so it doesn't surprise you.
+  `wasm32` less cleanly than the pure-Rust crypto crates do -- needs a
+  WASM-capable C toolchain. Solvable (prior art: `wa-sqlite`, sql.js);
+  not a v1 concern since Web is later.
