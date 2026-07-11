@@ -14,13 +14,14 @@ The foundation. No network, no crypto code, no UI.
   memory, update size. Confirms Loro before anything is built on it.
 - SQLite schema + numbered migrations from day one
 - Note CRUD: one Loro doc per note, stored as blobs in SQLite
-- Workspace metadata doc (folders, tags, note metadata, settings)
+- Metadata (folders, tags, note metadata, settings) in dedicated SQLite
+  tables, not inside a Loro doc
 - FTS5 full-text search over note plaintext
 - Markdown parsing (pulldown-cmark) + syntax spans for editor
   highlighting
 - Import/export (plain .md files)
 - Crypto & key-management **design written down** (shapes the storage
-  schema; implementation waits for Phase 2)
+  schema; implementation waits for Phase 2b)
 - Sync wire format versioning decided (version field in every payload)
 - CI: GitHub Actions, Linux runners -- unit tests, benchmarks
 
@@ -47,6 +48,8 @@ First real product. Shippable offline app is the milestone.
   - Checklists toggle by tap
   - Instant typing latency on 10k+ line documents; benchmark on
     mid-range hardware from day one
+- Sync staleness indicator: last-synced timestamp, visual cue when
+  offline
 - Android CI build (Linux runner)
 
 ### Exit criteria
@@ -56,9 +59,9 @@ First real product. Shippable offline app is the milestone.
 - Editor latency target holds on large real documents
 - Installable release APK (direct install; F-Droid/Play can wait)
 
-## Phase 2 -- Sync + E2E Encryption
+## Phase 2a -- Sync Protocol + Server
 
-Two devices, one truth, server sees nothing.
+Two devices, one truth (plaintext over TLS -- encryption comes in 2b).
 
 ### Deliverables
 
@@ -66,26 +69,42 @@ Two devices, one truth, server sees nothing.
   Litestream backup, behind Caddy (TLS)
 - Auth: Argon2id -> HKDF split (auth key to server, master key never
   leaves device)
-- E2E encryption: XChaCha20-Poly1305, per-document keys wrapped by
-  master key, zeroization
-- Encrypted change-log protocol: append-only encrypted Loro update
-  blobs per document, cursor-based pull, WebSocket push
-- Device pairing via QR code (x25519 key exchange) -- short design
-  pass first
-- Tombstone / deletion design: deleted notes eventually purged from
-  the server log (design before the protocol freezes)
+- Email + password signup/signin (no verification, no magic link)
+- Change-log protocol: append-only Loro update blobs per document,
+  global sequence number, cursor-based pull, WebSocket push
 - Offline queueing, fast reconnect
 - Sync-on-open (+ optional periodic WorkManager refresh); live
   WebSocket while the app is open. No FCM.
-- Sync round-trip + crypto tests in CI
+- Sync round-trip tests in CI
 
 ### Exit criteria
 
 - Android <-> Android sync (phone + emulator or second device --
   one UI stack, isolates sync bugs from UI bugs)
 - Concurrent offline edits on both devices merge correctly
-- Server disk contains only ciphertext (verified, not assumed)
 - Kill-the-server-mid-sync recovery works
+
+## Phase 2b -- E2E Encryption
+
+Server now stores only ciphertext.
+
+### Deliverables
+
+- E2E encryption: XChaCha20-Poly1305, per-document keys wrapped by
+  master key, zeroization
+- Device pairing via QR code (x25519 key exchange) -- short design
+  pass first
+- Encrypted change-log protocol: same protocol as 2a, but blobs are
+  now ciphertext
+- Tombstone / deletion design: deleted notes eventually purged from
+  the server log (design before the protocol freezes)
+- Crypto tests in CI -- plaintext != ciphertext asserted,
+  decryption round-trip, key derivation reproducibility
+
+### Exit criteria
+
+- Android <-> Android sync with full E2E (phone + emulator)
+- Server disk contains only ciphertext (verified, not assumed)
 
 ## Phase 3 -- macOS App
 
@@ -118,6 +137,14 @@ editing. Accepted v1 limitations, stated in the UI:
 - No attachments / images
 - No sharing or collaboration
 - Android sync only while the app is open
+
+## Open questions (not blocking v1)
+
+- **Conflict resolution UX.** CRDT handles data merging automatically,
+  but the user may see visual jumps when concurrent edits reconcile.
+  Do we show anything, or just let CRDT do its thing silently?
+- **Account features.** Password reset, email verification, rate
+  limiting, account deletion -- none designed yet.
 
 ## Later (unordered, post-v1)
 

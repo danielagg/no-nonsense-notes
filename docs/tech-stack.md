@@ -7,6 +7,7 @@ Overview document. Deep dives live in their own files:
 - [sync.md](sync.md) -- CRDT (Loro), sync protocol, tombstones,
   migrations
 - [editor.md](editor.md) -- editor architecture, markdown support
+- [testing.md](testing.md) -- test categories, benchmarks, CI layout
 
 ## Philosophy
 
@@ -25,8 +26,8 @@ Overview document. Deep dives live in their own files:
 - SQLite FTS5 for full-text search
 - One SQLite database per device
 - One Loro document per note (stored as blobs in SQLite)
-- One Loro "workspace" document for all metadata (folders, tags,
-  note metadata, settings)
+- Folders, tags, note metadata, settings in dedicated SQLite tables
+  (not inside a Loro doc -- avoids decryption overhead for listing)
 - Details: [sync.md](sync.md)
 
 ## Shared Core (Rust)
@@ -59,6 +60,21 @@ Overview document. Deep dives live in their own files:
 - Markdown
 - Import/export
 - Business logic
+
+## Threading model
+
+The Rust core is synchronous; the WebSocket runs on a dedicated
+`std::thread`. When updates arrive, Rust calls back into the native
+layer via a **UniFFI callback interface** (`SyncDelegate` trait).
+The native side implements the trait and dispatches to its UI thread:
+
+- **Android:** callback posts to `Dispatchers.Main`
+- **macOS:** callback dispatches to `DispatchQueue.main.async`
+
+This keeps the WebSocket thread isolated from the UI layer. The
+callback interface is defined in the UniFFI UDL and generated for
+both Kotlin and Swift bindings. No async runtime leaks into the
+client core -- Tokio stays server-side only.
 
 ## Native Apps
 
@@ -123,8 +139,8 @@ them to devices without understanding document contents.
 ## Phases
 
 See [roadmap.md](roadmap.md). Short version: Phase 0 Rust core (local
-only) -> Phase 1 Android app (local only) -> Phase 2 sync + E2E ->
-Phase 3 macOS = v1. iOS and Web later.
+only) -> Phase 1 Android app (local only) -> Phase 2a sync protocol ->
+Phase 2b E2E encryption -> Phase 3 macOS = v1. iOS and Web later.
 
 ## Costs (accepted)
 

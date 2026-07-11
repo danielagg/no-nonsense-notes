@@ -11,8 +11,11 @@ layer.
   modes
 - The Rust core supplies markdown syntax spans for highlighting
   (pulldown-cmark offset iterator)
-- Incremental restyling on edit: only re-highlight the damaged range,
-  never the whole document
+- Incremental restyling on edit: re-parse from the nearest structural
+  boundary (paragraph, heading, code fence) rather than the whole
+  document. Requires building an offset-index layer on top of
+  pulldown-cmark's event stream -- significant engineering, not just
+  an optimization.
 
 ## Requirements (all platforms, v1)
 
