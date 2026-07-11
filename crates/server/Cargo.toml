@@ -1,0 +1,6 @@
+[package]
+name = "no-nonsense-notes-server"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
