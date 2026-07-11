@@ -23,7 +23,7 @@ const MIGRATIONS: &[Migration] = &[Migration {
             title               TEXT NOT NULL DEFAULT 'Untitled',
             content_plaintext   TEXT NOT NULL DEFAULT '',
             content_loro_blob   BLOB NOT NULL DEFAULT (x''),
-            content_hash        BLOB,
+            content_hash        BLOB NOT NULL DEFAULT (x''),
             created_at          TEXT NOT NULL,
             updated_at          TEXT NOT NULL,
             is_deleted          INTEGER NOT NULL DEFAULT 0,
@@ -56,7 +56,7 @@ const MIGRATIONS: &[Migration] = &[Migration {
         );
 
         CREATE VIRTUAL TABLE notes_fts USING fts5(
-            title, content_plaintext, content=notes, content_rowid=rowid
+            title, content_plaintext
         );
     "#,
 }];

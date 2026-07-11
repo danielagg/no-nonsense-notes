@@ -7,4 +7,7 @@ pub enum StorageError {
 
     #[error("migration {version} failed: {detail}")]
     Migration { version: i64, detail: String },
+
+    #[error("loro error: {0}")]
+    Loro(String),
 }
