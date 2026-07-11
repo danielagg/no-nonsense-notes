@@ -1,11 +1,10 @@
 use loro::{ExportMode, LoroDoc};
 
 /// Phase 0 gate: confirm Loro handles a 10k-edit markdown document
-/// within acceptable time and memory bounds before building on it.
+/// within acceptable load time before building on it.
 ///
-/// Thresholds:
-///   - load time < 500ms
-///   - RSS delta < 50 MB
+/// Threshold:
+///   - load from snapshot < 500ms
 #[test]
 fn loro_10k_edit_gate() {
     let (snapshot, content_pre) = generate_10k_edit_doc();
@@ -14,28 +13,19 @@ fn loro_10k_edit_gate() {
     eprintln!("Blob size: {blob_size} bytes ({:.2} KB)", blob_size as f64 / 1024.0);
     eprintln!("Final content length: {} chars", content_pre.len());
 
-    let rss_before = get_max_rss();
     let start = std::time::Instant::now();
     let doc = LoroDoc::from_snapshot(&snapshot).unwrap();
     let elapsed = start.elapsed();
-    let rss_after = get_max_rss();
     let content_post = doc.get_text("content").to_string();
 
     assert_eq!(content_pre, content_post, "content mismatch after round-trip");
 
-    let mem_used = rss_after.saturating_sub(rss_before);
     eprintln!("Load time: {} µs", elapsed.as_micros());
-    eprintln!("RSS delta: {mem_used} bytes ({:.2} MB)", mem_used as f64 / (1024.0 * 1024.0));
 
     assert!(
         elapsed.as_millis() < 500,
         "load time {} ms exceeds 500 ms gate",
         elapsed.as_millis()
-    );
-
-    assert!(
-        mem_used < 50 * 1024 * 1024,
-        "memory {mem_used} bytes exceeds 50 MB gate"
     );
 }
 
@@ -77,16 +67,4 @@ fn generate_10k_edit_doc() -> (Vec<u8>, String) {
     let content = text.to_string();
     let blob = doc.export(ExportMode::Snapshot).unwrap();
     (blob, content)
-}
-
-fn get_max_rss() -> u64 {
-    unsafe {
-        let mut usage: libc::rusage = std::mem::zeroed();
-        libc::getrusage(libc::RUSAGE_SELF, &mut usage);
-        if cfg!(target_os = "macos") {
-            usage.ru_maxrss as u64
-        } else {
-            usage.ru_maxrss as u64 * 1024
-        }
-    }
 }

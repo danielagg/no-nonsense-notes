@@ -7,3 +7,6 @@ pub mod markdown;
 pub mod sync;
 pub mod crypto;
 pub mod import_export;
+
+mod error;
+pub use error::StorageError;
