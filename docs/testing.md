@@ -64,15 +64,21 @@ Runs in CI without real devices:
 
 ```
 Linux runner:
-  - cargo test (core unit + property + crypto)
-  - cargo bench (benchmark gates)
-  - Sync round-trip tests (in-process)
-  - Android build (Gradle + NDK, smoke only)
+  - cargo test --workspace
+  - cargo clippy --workspace -- -D warnings
+  - cargo fmt --check
 
-macOS runner:
-  - Swift build (Phase 3+)
-  - macOS app smoke test
+Deploy (only if tests pass):
+  - Trigger Render deploy via webhook
 ```
 
 No separate QA environment for v1. Dogfooding on the primary device
 is the main integration test (Phase 1 exit criterion).
+
+## Deployment
+
+- **Render.com** (free tier) — auto-deploys on push to `main` after
+  CI passes
+- Docker-based build from repo root `Dockerfile`
+- Free tier: no persistent disk, SQLite rebuilt on cold start
+- CI triggers Render deploy via webhook after tests pass

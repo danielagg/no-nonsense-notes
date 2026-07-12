@@ -67,8 +67,8 @@ Two devices, one truth (plaintext over TLS -- encryption comes in 2b).
 
 ### Deliverables
 
-- Server: single Rust binary (Axum + Tokio), SQLite storage,
-  Litestream backup, behind Caddy (TLS)
+- Server: single Rust binary (Axum + Tokio), SQLite storage
+- **Deployed on Render** (free tier, Docker-based, no credit card)
 - **Server owns its own SQLite schema and migration system** (separate
   from the core crate; same `.sql`-file convention — see
   [tech-stack.md](tech-stack.md))

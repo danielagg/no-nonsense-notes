@@ -103,15 +103,24 @@ Thin presentation layers over the Rust core. Editor details:
 
 ## Backend
 
-**Rust** -- one single-binary process on a cheap VPS. Intentionally
-"dumb": it authenticates clients, appends encrypted blobs, and streams
-them to devices without understanding document contents.
+**Rust** -- single-binary process. Intentionally "dumb": it
+authenticates clients, appends encrypted blobs, and streams them to
+devices without understanding document contents.
+
+### Hosting
+
+- **Render** (free tier, no credit card required)
+  - Docker-based deployment from `Dockerfile` in repo root
+  - Auto-deploys on push to `main` (after CI passes)
+  - Free tier: no persistent disk — SQLite rebuilt on cold start
+  - No TLS code: Render terminates TLS automatically
+  - Env vars: `PORT` (assigned by Render), `DATABASE_URL`
+  - Free tier cold start: 30-60s after 15min idle
 
 ### Libraries
 
 - Axum
 - Tokio
-- tokio-tungstenite
 - rusqlite (same crate as the client core)
 - anyhow (application-level error handling; the core library uses
   thiserror)
@@ -119,14 +128,10 @@ them to devices without understanding document contents.
 ### Database
 
 - **SQLite** (accounts, devices, sync metadata, encrypted update logs)
-- Continuous backup via Litestream (or equivalent WAL streaming)
 - No PostgreSQL: the server only stores accounts and opaque encrypted
   blobs; SQLite handles this scale for years, zero DB ops for a solo dev
-
-### TLS / Ingress
-
-- **Caddy** reverse proxy in front of Axum -- automatic Let's Encrypt
-  certificates, zero TLS code
+- **Free tier limitation:** no persistent disk; data rebuilt on cold
+  start. Persistent storage available on paid plans ($7/mo).
 
 ### Auth
 
