@@ -30,12 +30,15 @@ async fn main() {
     let db_path = std::env::var("DATABASE_URL").unwrap_or_else(|_| "server.db".into());
     let db = Arc::new(storage::Database::open(db_path.as_ref()).expect("failed to open database"));
 
-    let cors_origin = std::env::var("CORS_ORIGIN")
-        .unwrap_or_else(|_| "http://localhost:5173".into());
-    tracing::info!("CORS origin: {}", cors_origin);
+    let cors_origin: axum::http::HeaderValue = std::env::var("CORS_ORIGIN")
+        .expect("CORS_ORIGIN must be set (e.g. http://localhost:5173)")
+        .trim_end_matches('/')
+        .parse()
+        .expect("CORS_ORIGIN must be a valid URL");
+    tracing::info!("CORS origin: {:?}", cors_origin);
 
     let cors = CorsLayer::new()
-        .allow_origin(cors_origin.parse::<axum::http::HeaderValue>().unwrap())
+        .allow_origin(cors_origin)
         .allow_methods(AllowMethods::any())
         .allow_headers(AllowHeaders::any());
 

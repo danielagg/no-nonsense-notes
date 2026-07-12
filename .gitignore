@@ -4,4 +4,4 @@
 *.db
 *.db-shm
 *.db-wal
-.env.local
+.env
