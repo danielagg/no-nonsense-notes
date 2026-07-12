@@ -5,26 +5,33 @@ use axum::{
     response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use uuid::Uuid;
 
 use crate::storage::Database;
 use crate::error::ServerError;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct SignupRequest {
+    /// User email address
     pub email: String,
+    /// User password
     pub password: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct AuthResponse {
+    /// Authentication token
     pub token: String,
+    /// Account UUID
     pub account_id: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct SigninRequest {
+    /// User email address
     pub email: String,
+    /// User password
     pub password: String,
 }
 
@@ -36,6 +43,16 @@ impl IntoResponse for ServerError {
     }
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/signup",
+    request_body = SignupRequest,
+    responses(
+        (status = 201, description = "Account created", body = AuthResponse),
+        (status = 409, description = "Email already registered"),
+        (status = 500, description = "Internal error")
+    )
+)]
 pub async fn signup(
     State(db): State<std::sync::Arc<Database>>,
     Json(req): Json<SignupRequest>,
@@ -81,6 +98,16 @@ pub async fn signup(
     ))
 }
 
+#[utoipa::path(
+    post,
+    path = "/auth/signin",
+    request_body = SigninRequest,
+    responses(
+        (status = 200, description = "Signed in", body = AuthResponse),
+        (status = 401, description = "Invalid credentials"),
+        (status = 500, description = "Internal error")
+    )
+)]
 pub async fn signin(
     State(db): State<std::sync::Arc<Database>>,
     Json(req): Json<SigninRequest>,

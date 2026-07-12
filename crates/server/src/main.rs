@@ -5,8 +5,18 @@ use axum::{
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
+use utoipa::{OpenApi};
+use utoipa_swagger_ui::SwaggerUi;
 
 use no_nonsense_notes_server::{auth, storage, sync};
+
+#[derive(OpenApi)]
+#[openapi(
+    paths(auth::signup, auth::signin, sync::ws_handler),
+    components(schemas(auth::SignupRequest, auth::SigninRequest, auth::AuthResponse)),
+    info(title = "No Nonsense Notes API", version = "0.1.0")
+)]
+struct ApiDoc;
 
 #[tokio::main]
 async fn main() {
@@ -21,6 +31,7 @@ async fn main() {
         .route("/auth/signup", post(auth::signup))
         .route("/auth/signin", post(auth::signin))
         .route("/sync", get(sync::ws_handler))
+        .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(TraceLayer::new_for_http())
         .with_state(db);
 

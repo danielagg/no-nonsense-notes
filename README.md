@@ -9,7 +9,7 @@ Solo-dev project.
 | Component | Status |
 |---|---|
 | Rust core (note CRUD, FTS5, schema) | In progress (Phase 0) |
-| Server (sync, auth) | Stub (`println!("not yet implemented")`) |
+| Server (sync, auth, Swagger UI) | In progress |
 | Android app | Not started (Phase 1) |
 | macOS app | Not started (Phase 3) |
 | iOS app | Not started (post-v1) |
@@ -71,8 +71,30 @@ cargo build -p no-nonsense-notes-core
 # Run core tests
 cargo test -p no-nonsense-notes-core
 
-# Server (not yet implemented)
+# Server
 cargo run -p no-nonsense-notes-server
+```
+
+## API Documentation
+
+The server ships with interactive API docs via Swagger UI.
+
+1. Start the server: `RUST_LOG=info cargo run -p no-nonsense-notes-server`
+2. Open **http://localhost:3000/swagger-ui** in your browser
+3. Raw OpenAPI spec: **http://localhost:3000/api-docs/openapi.json**
+
+### Quick test
+
+```bash
+# Sign up
+curl -s -X POST http://localhost:3000/auth/signup \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"test@test.com","password":"secret123"}'
+
+# Sign in
+curl -s -X POST http://localhost:3000/auth/signin \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"test@test.com","password":"secret123"}'
 ```
 
 ## Design principles
