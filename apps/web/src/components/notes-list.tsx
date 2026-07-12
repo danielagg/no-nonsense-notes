@@ -1,57 +1,36 @@
-import { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { getNotes, createNote, deleteNote, type Note } from "@/lib/api";
-import { useSyncState } from "@/lib/sync-context";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAuth } from "@/lib/auth-context";
-import { NoteEditor } from "./note-editor";
+import { useState } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getNotes, createNote, deleteNote, type Note } from '@/lib/api';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { useAuth } from '@/lib/auth-context';
+import { NoteEditor } from './note-editor';
 
 export function NotesList() {
   const { logout, accountId } = useAuth();
   const queryClient = useQueryClient();
-  const { pushNote, pushDelete } = useSyncState();
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
 
   const { data: notes = [] } = useQuery({
-    queryKey: ["notes"],
+    queryKey: ['notes'],
     queryFn: getNotes,
   });
 
-  const createMutation = useMutation<Note, Error, "markdown" | "list">({
-    mutationFn: (type) => {
-      console.log("Creating note of type:", type);
-      const note = createNote(type);
-      console.log("Note created:", note);
-      return Promise.resolve(note);
-    },
-    onSuccess: (note) => {
-      console.log("Mutation succeeded, opening editor");
-      queryClient.invalidateQueries({ queryKey: ["notes"] });
-      pushNote(note.id);
-      setSelectedNote(note);
-    },
-    onError: (err) => {
-      console.error("Create note failed:", err);
-      alert(`Failed to create note: ${err}`);
-    },
+  const createMutation = useMutation({
+    mutationFn: (type: 'markdown' | 'list') => Promise.resolve(createNote(type)),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes'] }),
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => {
-      deleteNote(id);
-    },
-    onSuccess: (_, id) => {
-      queryClient.invalidateQueries({ queryKey: ["notes"] });
+    mutationFn: async (id: string) => { deleteNote(id); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
       setSelectedNote(null);
-      pushDelete(id);
     },
   });
 
   if (selectedNote) {
-    return (
-      <NoteEditor note={selectedNote} onBack={() => setSelectedNote(null)} />
-    );
+    return <NoteEditor note={selectedNote} onBack={() => setSelectedNote(null)} />;
   }
 
   return (
@@ -59,23 +38,15 @@ export function NotesList() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold">Notes</h1>
-          <p className="text-sm text-muted-foreground truncate max-w-50">
+          <p className="text-sm text-muted-foreground truncate max-w-[200px]">
             {accountId}
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => createMutation.mutate("markdown")}
-          >
+          <Button variant="outline" size="sm" onClick={() => createMutation.mutate('markdown')}>
             + Markdown
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => createMutation.mutate("list")}
-          >
+          <Button variant="outline" size="sm" onClick={() => createMutation.mutate('list')}>
             + List
           </Button>
           <Button variant="ghost" size="sm" onClick={logout}>
@@ -117,17 +88,17 @@ export function NotesList() {
                   </div>
                 </div>
               </CardHeader>
-              {note.type === "markdown" && (
+              {note.type === 'markdown' && (
                 <CardContent className="pt-0 px-4 pb-3">
                   <p className="text-sm text-muted-foreground line-clamp-2 whitespace-pre-wrap">
-                    {note.content.replace(/[#*_`]/g, "").slice(0, 200)}
+                    {note.content.replace(/[#*_`]/g, '').slice(0, 200)}
                   </p>
                 </CardContent>
               )}
-              {note.type === "list" && note.items && (
+              {note.type === 'list' && note.items && (
                 <CardContent className="pt-0 px-4 pb-3">
                   <p className="text-sm text-muted-foreground">
-                    {note.items.length} item{note.items.length !== 1 ? "s" : ""}
+                    {note.items.length} item{note.items.length !== 1 ? 's' : ''}
                   </p>
                 </CardContent>
               )}

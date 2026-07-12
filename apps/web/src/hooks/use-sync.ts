@@ -1,25 +1,24 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { importSnapshot, deleteNote, getDeviceId } from '@/lib/loro-store';
 
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 
-export function useSync(onSyncComplete?: () => void) {
+interface SyncEntry {
+  docId: string;
+  blob: string; // base64
+  globalSeq: number;
+}
+
+export function useSync() {
   const { token, isAuthenticated } = useAuth();
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<SyncStatus>('disconnected');
-  const [lastSeq, setLastSeq] = useState(() => {
-    const stored = localStorage.getItem('nnn-last-seq');
-    return stored ? parseInt(stored, 10) : 0;
-  });
-
-  const persistSeq = useCallback((seq: number) => {
-    setLastSeq(seq);
-    localStorage.setItem('nnn-last-seq', String(seq));
-  }, []);
+  const [lastSeq, setLastSeq] = useState(0);
+  const [entries, setEntries] = useState<SyncEntry[]>([]);
 
   const connect = useCallback(() => {
     if (!isAuthenticated || !token) return;
+    // Guard: already connected or connecting
     if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) return;
 
     setStatus('connecting');
@@ -31,67 +30,54 @@ export function useSync(onSyncComplete?: () => void) {
     wsRef.current = ws;
 
     ws.onopen = () => {
+      // Send auth token as first message
       ws.send(token);
       setStatus('connected');
-      // Auto-pull everything from seq 0 on connect
-      const stored = localStorage.getItem('nnn-last-seq');
-      const fromSeq = stored ? parseInt(stored, 10) : 0;
-      ws.send(`pull:${fromSeq}`);
     };
 
     ws.onmessage = (ev) => {
       const data = ev.data;
-
-      // Text messages: pull responses
       if (typeof data === 'string') {
         if (data === 'unauthorized') {
           setStatus('error');
           ws.close();
           return;
         }
-
         // Parse pull response: "seq:N\ndoc_id:base64\n..."
         if (data.startsWith('seq:')) {
           const lines = data.split('\n');
           const seqMatch = lines[0].match(/^seq:(\d+)$/);
           if (seqMatch) {
-            persistSeq(parseInt(seqMatch[1], 10));
+            setLastSeq(parseInt(seqMatch[1], 10));
           }
-
-          // Import each entry's snapshot into local store
-          let imported = false;
+          const newEntries: SyncEntry[] = [];
           for (let i = 1; i < lines.length; i++) {
             const colonIdx = lines[i].indexOf(':');
             if (colonIdx > 0) {
-              const docId = lines[i].substring(0, colonIdx);
-              const b64 = lines[i].substring(colonIdx + 1);
-              const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-              if (bytes.length === 0) {
-                deleteNote(docId);
-              } else {
-                importSnapshot(docId, bytes);
-              }
-              imported = true;
+              newEntries.push({
+                docId: lines[i].substring(0, colonIdx),
+                blob: lines[i].substring(colonIdx + 1),
+                globalSeq: 0,
+              });
             }
           }
-
-          if (imported && onSyncComplete) {
-            onSyncComplete();
+          if (newEntries.length > 0) {
+            setEntries((prev) => [...prev, ...newEntries]);
           }
         }
       }
-
       // Binary push response: 8 bytes global_seq LE
       if (data instanceof ArrayBuffer) {
         const view = new DataView(data);
         if (data.byteLength === 8) {
           const seq = Number(view.getBigUint64(0, true));
-          persistSeq(seq);
+          setLastSeq(seq);
         }
       }
     };
 
     ws.onclose = () => {
+      // Guard: only update state if this is still the active WebSocket
       if (wsRef.current === ws) {
         setStatus('disconnected');
         wsRef.current = null;
@@ -99,11 +85,12 @@ export function useSync(onSyncComplete?: () => void) {
     };
 
     ws.onerror = () => {
+      // Guard: only update state if this is still the active WebSocket
       if (wsRef.current === ws) {
         setStatus('error');
       }
     };
-  }, [token, isAuthenticated, persistSeq, onSyncComplete]);
+  }, [token, isAuthenticated]);
 
   const disconnect = useCallback(() => {
     wsRef.current?.close();
@@ -116,38 +103,19 @@ export function useSync(onSyncComplete?: () => void) {
     }
   }, []);
 
-  const push = useCallback((docId: string, snapshot: Uint8Array) => {
+  const push = useCallback((docId: string, deviceId: string, blob: Uint8Array) => {
     if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-
-    const deviceId = getDeviceId();
-    const docIdBytes = hexToBytes(docId);
-    const deviceIdBytes = hexToBytes(deviceId);
 
     // Binary format: [version:1][type:1][doc_id:16][device_id:16][blob_len:4][blob:N]
-    const payload = new Uint8Array(2 + 16 + 16 + 4 + snapshot.length);
-    payload[0] = 1; // version
-    payload[1] = 1; // push
-    payload.set(docIdBytes, 2);
-    payload.set(deviceIdBytes, 18);
-    new DataView(payload.buffer).setUint32(34, snapshot.length, true);
-    payload.set(snapshot, 38);
-    wsRef.current.send(payload);
-  }, []);
-
-  const pushDelete = useCallback((docId: string) => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-
-    const deviceId = getDeviceId();
     const docIdBytes = hexToBytes(docId);
     const deviceIdBytes = hexToBytes(deviceId);
-
-    // Same format as push but blob_len=0, no blob bytes
-    const payload = new Uint8Array(2 + 16 + 16 + 4);
+    const payload = new Uint8Array(2 + 16 + 16 + 4 + blob.length);
     payload[0] = 1; // version
     payload[1] = 1; // push
     payload.set(docIdBytes, 2);
     payload.set(deviceIdBytes, 18);
-    new DataView(payload.buffer).setUint32(34, 0, true);
+    new DataView(payload.buffer).setUint32(34, blob.length, true);
+    payload.set(blob, 38);
     wsRef.current.send(payload);
   }, []);
 
@@ -159,7 +127,7 @@ export function useSync(onSyncComplete?: () => void) {
     return () => disconnect();
   }, [isAuthenticated, connect, disconnect]);
 
-  return { status, lastSeq, connect, disconnect, pull, push, pushDelete };
+  return { status, lastSeq, entries, connect, disconnect, pull, push };
 }
 
 function hexToBytes(hex: string): Uint8Array {
