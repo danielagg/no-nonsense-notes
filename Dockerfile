@@ -24,8 +24,8 @@ RUN chown -R app:app /app
 
 USER app
 
-ENV DATABASE_URL=/data/server.db
-ENV LISTEN_ADDR=0.0.0.0:8080
+ENV PORT=8080
+ENV DATABASE_URL=server.db
 
 EXPOSE 8080
 

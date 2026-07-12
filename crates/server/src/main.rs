@@ -24,7 +24,14 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .with_state(db);
 
-    let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".into());
+    let port = std::env::var("PORT")
+        .or_else(|_| std::env::var("LISTEN_ADDR"))
+        .unwrap_or_else(|_| "3000".into());
+    let addr = if port.contains(':') {
+        port
+    } else {
+        format!("0.0.0.0:{}", port)
+    };
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     tracing::info!("listening on {}", addr);
     axum::serve(listener, app).await.unwrap();
