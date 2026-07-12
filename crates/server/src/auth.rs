@@ -155,8 +155,8 @@ fn verify_password(password: &str, hash: &str) -> Result<bool, String> {
 
 fn generate_token() -> String {
     use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let bytes: Vec<u8> = (0..32).map(|_| rng.gen()).collect();
+    let mut rng = rand::rng();
+    let bytes: Vec<u8> = (0..32).map(|_| rng.random()).collect();
     hex::encode(bytes)
 }
 

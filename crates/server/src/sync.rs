@@ -55,7 +55,7 @@ async fn handle_socket(mut socket: WebSocket, db: std::sync::Arc<Database>) {
             Message::Binary(data) => {
                 match handle_binary_message(&db, &account_id, &data) {
                     Ok(response) => {
-                        if let Err(e) = socket.send(Message::Binary(response)).await {
+                        if let Err(e) = socket.send(Message::Binary(response.into())).await {
                             error!("failed to send: {}", e);
                             break;
                         }
@@ -69,7 +69,7 @@ async fn handle_socket(mut socket: WebSocket, db: std::sync::Arc<Database>) {
             Message::Text(text) => {
                 match handle_text_message(&db, &account_id, &text) {
                     Ok(response) => {
-                        if let Err(e) = socket.send(Message::Text(response)).await {
+                        if let Err(e) = socket.send(Message::Text(response.into())).await {
                             error!("failed to send: {}", e);
                             break;
                         }

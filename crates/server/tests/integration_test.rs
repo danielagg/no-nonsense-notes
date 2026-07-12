@@ -159,7 +159,7 @@ async fn test_ws_auth_rejection() {
     // Should get "unauthorized" response
     let msg = read.next().await.unwrap().unwrap();
     match msg {
-        Message::Text(text) => assert_eq!(text, "unauthorized"),
+        Message::Text(text) => assert_eq!(text.as_str(), "unauthorized"),
         _ => panic!("expected text message"),
     }
 }
@@ -222,7 +222,7 @@ async fn test_sync_push_and_pull() {
     msg.push(1u8); // MSG_PUSH
     msg.extend_from_slice(&payload);
 
-    write.send(Message::Binary(msg)).await.unwrap();
+    write.send(Message::Binary(msg.into())).await.unwrap();
 
     // Read push response (global_seq)
     let response = read.next().await.unwrap().unwrap();
