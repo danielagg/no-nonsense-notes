@@ -131,8 +131,9 @@ pub fn verify_token(db: &Database, token: &str) -> Result<String, ServerError> {
 }
 
 fn hash_password(password: &str) -> Result<String, String> {
-    use argon2::password_hash::{rand_core::OsRng, SaltString};
+    use argon2::password_hash::SaltString;
     use argon2::{Argon2, PasswordHasher};
+    use argon2::password_hash::rand_core::OsRng;
 
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
