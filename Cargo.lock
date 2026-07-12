@@ -1645,6 +1645,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "no-nonsense-notes-wasm"
+version = "0.1.0"
+dependencies = [
+ "js-sys",
+ "no-nonsense-notes-core",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
 name = "nonmax"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"

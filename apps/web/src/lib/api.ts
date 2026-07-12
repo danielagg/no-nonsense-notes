@@ -14,7 +14,7 @@ export interface Note {
   updated_at: string;
 }
 
-// Auth API
+// Auth API (server-backed)
 export async function signup(email: string, password: string): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/signup`, {
     method: 'POST',
@@ -41,43 +41,68 @@ export async function signin(email: string, password: string): Promise<AuthRespo
   return res.json();
 }
 
-// Local-only note storage (localStorage) for this throwaway sandbox
-const NOTES_KEY = 'nnn-notes';
+// WASM-backed note storage
+import {
+  getNotes as wasmGetNotes,
+  createNote as wasmCreateNote,
+  updateNote as wasmUpdateNote,
+  listAddItem as wasmListAddItem,
+  listRemoveItem as wasmListRemoveItem,
+  softDelete as wasmSoftDelete,
+  searchNotes as wasmSearchNotes,
+  type WasmNote,
+} from './wasm';
 
-export function getNotes(): Note[] {
-  const raw = localStorage.getItem(NOTES_KEY);
-  return raw ? JSON.parse(raw) : [];
-}
-
-export function saveNotes(notes: Note[]) {
-  localStorage.setItem(NOTES_KEY, JSON.stringify(notes));
-}
-
-export function createNote(type: 'markdown' | 'list'): Note {
-  const note: Note = {
-    id: crypto.randomUUID(),
-    title: type === 'markdown' ? 'Untitled' : 'Untitled List',
-    type,
-    content: type === 'markdown' ? '# Hello\n\nStart writing...' : '',
-    items: type === 'list' ? ['First item'] : undefined,
-    updated_at: new Date().toISOString(),
+function wasmToNote(w: WasmNote): Note {
+  const isList = w.noteType === 'list';
+  const items = isList
+    ? w.contentPlaintext.split('\n').filter((s) => s.length > 0)
+    : undefined;
+  return {
+    id: w.id,
+    title: w.title,
+    type: w.noteType as 'markdown' | 'list',
+    content: w.contentPlaintext,
+    items,
+    updated_at: w.updatedAt,
   };
-  const notes = getNotes();
-  notes.unshift(note);
-  saveNotes(notes);
-  return note;
 }
 
-export function updateNote(id: string, updates: Partial<Note>): Note | null {
-  const notes = getNotes();
-  const idx = notes.findIndex((n) => n.id === id);
-  if (idx === -1) return null;
-  notes[idx] = { ...notes[idx], ...updates, updated_at: new Date().toISOString() };
-  saveNotes(notes);
-  return notes[idx];
+export async function getNotes(): Promise<Note[]> {
+  const notes = await wasmGetNotes();
+  return notes.map(wasmToNote);
 }
 
-export function deleteNote(id: string) {
-  const notes = getNotes().filter((n) => n.id !== id);
-  saveNotes(notes);
+export async function createNote(type: 'markdown' | 'list'): Promise<Note> {
+  const note = await wasmCreateNote(type);
+  return wasmToNote(note);
+}
+
+export async function updateNote(
+  id: string,
+  updates: Partial<Pick<Note, 'content' | 'items'>>,
+): Promise<Note | null> {
+  try {
+    if (updates.items !== undefined) {
+      const content = updates.items.join('\n');
+      const note = await wasmUpdateNote(id, content);
+      return wasmToNote(note);
+    }
+    if (updates.content !== undefined) {
+      const note = await wasmUpdateNote(id, updates.content);
+      return wasmToNote(note);
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteNote(id: string): Promise<void> {
+  await wasmSoftDelete(id);
+}
+
+export async function searchNotes(query: string): Promise<Note[]> {
+  const notes = await wasmSearchNotes(query);
+  return notes.map(wasmToNote);
 }

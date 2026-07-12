@@ -3,16 +3,21 @@ name = "no-nonsense-notes-core"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = ["sqlite"]
+sqlite = ["dep:rusqlite", "dep:migration-build"]
+wasm = ["uuid/js"]
+
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 loro = "1"
-rusqlite = { version = "0.40", features = ["bundled"] }
 sha2 = "0.10"
-migration-build = { path = "../migration-build" }
+rusqlite = { version = "0.40", features = ["bundled"], optional = true }
+migration-build = { path = "../migration-build", optional = true }
 
 [build-dependencies]
-migration-build = { path = "../migration-build" }
+migration-build = { path = "../migration-build", optional = true }
 

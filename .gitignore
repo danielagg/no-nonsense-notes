@@ -5,3 +5,9 @@
 *.db-shm
 *.db-wal
 .env
+
+# Generated WASM artifacts
+crates/wasm/pkg/
+apps/web/src/lib/wasm-pkg/
+.vercel
+.env*
