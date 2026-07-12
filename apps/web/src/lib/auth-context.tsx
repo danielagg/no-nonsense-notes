@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { clearAll } from './loro-store';
 
 interface AuthState {
   token: string | null;
@@ -27,6 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const logout = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(ACCOUNT_KEY);
+    clearAll();
     setToken(null);
     setAccountId(null);
   }, []);

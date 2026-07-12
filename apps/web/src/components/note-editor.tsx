@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { updateNote, type Note } from '@/lib/api';
+import { useSyncState } from '@/lib/sync-context';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,6 +14,7 @@ interface Props {
 
 export function NoteEditor({ note, onBack }: Props) {
   const queryClient = useQueryClient();
+  const { pushNote } = useSyncState();
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [items, setItems] = useState(note.items ?? []);
@@ -21,6 +23,7 @@ export function NoteEditor({ note, onBack }: Props) {
     mutationFn: () => Promise.resolve(updateNote(note.id, { title, content, items })),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
+      pushNote(note.id);
       onBack();
     },
   });

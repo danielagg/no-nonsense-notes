@@ -151,7 +151,7 @@ fn handle_binary_message(
 
 fn handle_push(
     db: &Database,
-    _account_id: &str,
+    account_id: &str,
     payload: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
     if payload.len() < 36 {
@@ -170,8 +170,8 @@ fn handle_push(
 
     let conn = db.conn.lock().unwrap();
     conn.execute(
-        "INSERT INTO updates (doc_id, device_id, blob) VALUES (?1, ?2, ?3)",
-        params![doc_id.to_string(), device_id.to_string(), blob],
+        "INSERT INTO updates (doc_id, device_id, account_id, blob) VALUES (?1, ?2, ?3, ?4)",
+        params![doc_id.to_string(), device_id.to_string(), account_id, blob],
     )?;
 
     let global_seq: i64 = conn.last_insert_rowid();
@@ -183,7 +183,7 @@ fn handle_push(
 
 fn handle_text_message(
     db: &Database,
-    _account_id: &str,
+    account_id: &str,
     text: &str,
 ) -> anyhow::Result<String> {
     let parts: Vec<&str> = text.splitn(2, ':').collect();
@@ -195,11 +195,11 @@ fn handle_text_message(
 
     let conn = db.conn.lock().unwrap();
     let mut stmt = conn.prepare(
-        "SELECT doc_id, global_seq, blob FROM updates WHERE global_seq > ?1 ORDER BY global_seq ASC LIMIT 1000",
+        "SELECT doc_id, global_seq, blob FROM updates WHERE global_seq > ?1 AND account_id = ?2 ORDER BY global_seq ASC LIMIT 1000",
     )?;
 
     let entries: Vec<(String, i64, Vec<u8>)> = stmt
-        .query_map(params![last_seq], |row| {
+        .query_map(params![last_seq, account_id], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?
         .collect::<Result<Vec<_>, _>>()?;

@@ -1,4 +1,5 @@
-import { useSync, type SyncStatus } from "@/hooks/use-sync";
+import { useSyncState } from '@/lib/sync-context';
+import type { SyncStatus } from '@/hooks/use-sync';
 
 const STATUS_LABELS: Record<SyncStatus, string> = {
   disconnected: "Offline",
@@ -15,7 +16,7 @@ const STATUS_COLORS: Record<SyncStatus, string> = {
 };
 
 export function SyncBadge() {
-  const { status, lastSeq, pull } = useSync();
+  const { status, lastSeq, pullAll } = useSyncState();
 
   return (
     <div className="fixed bottom-4 right-4 z-50">
@@ -24,7 +25,7 @@ export function SyncBadge() {
         <span className="text-foreground/70">{STATUS_LABELS[status]}</span>
         {lastSeq > 0 && (
           <button
-            onClick={() => pull(lastSeq)}
+            onClick={() => pullAll()}
             className="text-foreground/70 hover:text-foreground underline"
             title="Pull latest"
           >

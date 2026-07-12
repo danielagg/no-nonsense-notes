@@ -63,7 +63,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
     }
 
     #[test]
@@ -77,7 +77,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
     }
 
     #[test]
@@ -113,6 +113,15 @@ mod tests {
             )
             .unwrap();
         assert_eq!(description, "initial");
+
+        let description: String = conn
+            .query_row(
+                "SELECT description FROM _schema_version WHERE version = 2",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(description, "scope updates by account");
     }
 
     #[test]
@@ -168,7 +177,11 @@ mod tests {
         indexes.sort();
         assert_eq!(
             indexes,
-            vec!["idx_updates_device_id", "idx_updates_doc_id"]
+            vec![
+                "idx_updates_account_id",
+                "idx_updates_device_id",
+                "idx_updates_doc_id"
+            ]
         );
     }
 

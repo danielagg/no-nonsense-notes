@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getNotes, createNote, deleteNote, type Note } from '@/lib/api';
+import { useSyncState } from '@/lib/sync-context';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth-context';
@@ -9,6 +10,7 @@ import { NoteEditor } from './note-editor';
 export function NotesList() {
   const { logout, accountId } = useAuth();
   const queryClient = useQueryClient();
+  const { pushNote, pushDelete } = useSyncState();
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
 
   const { data: notes = [] } = useQuery({
@@ -16,16 +18,31 @@ export function NotesList() {
     queryFn: getNotes,
   });
 
-  const createMutation = useMutation({
-    mutationFn: (type: 'markdown' | 'list') => Promise.resolve(createNote(type)),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notes'] }),
+  const createMutation = useMutation<Note, Error, 'markdown' | 'list'>({
+    mutationFn: (type) => {
+      console.log('Creating note of type:', type);
+      const note = createNote(type);
+      console.log('Note created:', note);
+      return Promise.resolve(note);
+    },
+    onSuccess: (note) => {
+      console.log('Mutation succeeded, opening editor');
+      queryClient.invalidateQueries({ queryKey: ['notes'] });
+      pushNote(note.id);
+      setSelectedNote(note);
+    },
+    onError: (err) => {
+      console.error('Create note failed:', err);
+      alert(`Failed to create note: ${err}`);
+    },
   });
 
   const deleteMutation = useMutation({
     mutationFn: async (id: string) => { deleteNote(id); },
-    onSuccess: () => {
+    onSuccess: (_, id) => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       setSelectedNote(null);
+      pushDelete(id);
     },
   });
 
