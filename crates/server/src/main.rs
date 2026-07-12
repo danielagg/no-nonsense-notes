@@ -1,3 +1,31 @@
-fn main() {
-    println!("No Nonsense Notes server (not yet implemented)");
+use axum::{
+    routing::{get, post},
+    Router,
+};
+use std::sync::Arc;
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::EnvFilter;
+
+use no_nonsense_notes_server::{auth, storage, sync};
+
+#[tokio::main]
+async fn main() {
+    tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
+        .init();
+
+    let db_path = std::env::var("DATABASE_URL").unwrap_or_else(|_| "server.db".into());
+    let db = Arc::new(storage::Database::open(db_path.as_ref()).expect("failed to open database"));
+
+    let app = Router::new()
+        .route("/auth/signup", post(auth::signup))
+        .route("/auth/signin", post(auth::signin))
+        .route("/sync", get(sync::ws_handler))
+        .layer(TraceLayer::new_for_http())
+        .with_state(db);
+
+    let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:3000".into());
+    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
+    tracing::info!("listening on {}", addr);
+    axum::serve(listener, app).await.unwrap();
 }

@@ -89,12 +89,13 @@ limitations:
   Affects the storage schema (wrapped keys must be re-writable and
   versioned), so note the shape in Phase 0 even though implementation
   is Phase 2b.
-- **Session / WebSocket auth lifecycle.** The auth key gets the client
-  logged in, but nothing is decided about what happens after: session
-  token format (opaque token vs JWT), expiry and refresh, how the
-  WebSocket authenticates (token in the upgrade request?), and
-  revocation when a device is removed. Design alongside device pairing
-  in Phase 2b.
+- **Session / WebSocket auth lifecycle.** Decided: opaque bearer tokens
+  (not JWT). Server generates a random token on successful signin, stores
+  it in `auth_tokens` table. Client sends it as `Authorization: Bearer
+  <token>` on HTTP requests and as the first message after WebSocket
+  upgrade. Token has no expiry in v1 (simple; revocation via device
+  removal). Refresh and revocation design deferred to Phase 2b alongside
+  device pairing.
 - **Account features beyond email+password.** Rate limiting, password
   reset, email verification, account deletion -- none designed yet.
   Keep scope minimal for v1.

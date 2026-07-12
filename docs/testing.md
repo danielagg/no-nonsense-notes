@@ -11,7 +11,9 @@ minimum maintenance burden. Heavy investment in the Rust core where
 - Note CRUD: create, edit, delete, search, export
 - Loro doc operations: import/export update blobs, shallow snapshots
 - SQLite schema migrations: apply each migration, verify expected
-  schema version, test roll-forward
+  schema version, test idempotency (run twice, same result)
+- Both `core` and `server` crates share the same migration convention
+  (individual `.sql` files, auto-discovered by `migration-build` crate)
 - Markdown parsing: syntax spans match expected ranges for all v1
   elements (headings, bold/italic, lists, checklists, blockquotes,
   tables, code blocks, links, horizontal rules)

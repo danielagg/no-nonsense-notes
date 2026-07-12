@@ -128,6 +128,34 @@ them to devices without understanding document contents.
 - **Caddy** reverse proxy in front of Axum -- automatic Let's Encrypt
   certificates, zero TLS code
 
+### Auth
+
+- Email + password signup/signin (no verification, no magic link in v1)
+- **Opaque bearer tokens** (not JWT) — simple random tokens stored in
+  the `auth_tokens` table, verified on each request
+- Password hashed with Argon2id server-side (the auth key from the
+  client's HKDF derivation)
+
+### Schema ownership & migrations
+
+- **Server owns its own SQLite schema and migration system**, separate
+  from the core crate's migrations.
+- Both crates follow the **same convention** for schema migrations:
+  - Migrations live in `src/storage/migrations/` as individual `.sql`
+    files named `NNN_description.sql` (e.g. `001_initial.sql`,
+    `002_add_note_type.sql`).
+  - The numeric prefix is the version number; the remainder becomes the
+    migration description (underscores → spaces).
+  - A `build.rs` calls `migration_build::generate()` (shared crate in
+    `crates/migration-build/`) which scans the directory at compile
+    time and generates a `MIGRATIONS` static array via `include_str!`.
+  - **To add a migration:** drop a new `.sql` file into the
+    `migrations/` directory. No other code changes needed — the build
+    script picks it up automatically.
+  - Each migration is tracked in a `_schema_version` table with
+    `version`, `description`, and `applied_at` columns.
+  - Migrations are idempotent — safe to run multiple times.
+
 ### Responsibilities
 
 - Authentication

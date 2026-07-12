@@ -20,22 +20,26 @@ reading them. Encryption details in [security.md](security.md).
 
 ## Sync protocol: encrypted change-log
 
-Own thin protocol. The stock Loro sync protocol require both
+Own thin protocol. The stock Loro sync protocol requires both
 peers to read document state (heads, bloom filters), which is
 incompatible with a blind relay -- hence this design:
 
-- Server keeps an **append-only log of encrypted Loro update blobs**
+- Server keeps an **append-only log of Loro update blobs**
   with a single global monotonic sequence number per entry
 - Client tracks `last_seen_global_seq`; pull requests "give me
   everything after N" -- simpler than per-doc cursors and avoids
   missed-document edge cases
-- Response is a list of `(doc_id, encrypted_blob, global_seq)` pairs;
-  client decrypts and imports each blob into its local Loro doc
-- Client push: export local updates -> encrypt -> append to the
-  server log
-- The server never participates in CRDT logic and never sees plaintext
-- Wire format: raw encrypted bytes (no JSON), with a **version field in
-  every payload**
+- Response is a list of `(doc_id, blob, global_seq)` pairs;
+  client imports each blob into its local Loro doc
+- Client push: export local updates -> append to the server log
+- The server never participates in CRDT logic and treats all blobs
+  as **opaque bytes** (even in Phase 2a before encryption ships;
+  identical code path for 2a and 2b)
+- Wire format: **binary protocol** (no JSON), with a version byte +
+  message type + payload in every frame
+- Server SQLite: **flat log table** (`global_seq`, `doc_id`,
+  `device_id`, `blob`, `created_at`) -- simple append-only, client
+  pulls everything after its cursor
 
 ## Transport & behavior
 
@@ -56,6 +60,7 @@ incompatible with a blind relay -- hence this design:
   note in SQLite metadata + a "purge document" server call once all
   devices have acked. Design in Phase 2 before the protocol freezes.
 - **Schema & format migrations.** Three things version independently:
-  SQLite schema (numbered migrations from day one), Loro document
-  format, and the sync wire format. Old app versions on other devices
-  must fail gracefully, not corrupt. Plan in Phase 0.
+  SQLite schema (numbered `.sql`-file migrations auto-discovered by
+  `migration-build` — see [tech-stack.md](tech-stack.md)), Loro
+  document format, and the sync wire format. Old app versions on other
+  devices must fail gracefully, not corrupt. Plan in Phase 0.

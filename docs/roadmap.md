@@ -12,7 +12,9 @@ The foundation. No network, no crypto code, no UI.
 - Cargo workspace: `core` crate + `cli` test harness
 - **Loro benchmark (gate):** 10k-edit markdown document -- load time,
   memory, update size. Confirms Loro before anything is built on it.
-- SQLite schema + numbered migrations from day one
+- SQLite schema + numbered migrations from day one (individual `.sql`
+  files, auto-discovered by `migration-build` crate — see
+  [tech-stack.md](tech-stack.md))
 - Note CRUD: one Loro doc per note, stored as blobs in SQLite
 - Metadata (folders, tags, note metadata, settings) in dedicated SQLite
   tables, not inside a Loro doc
@@ -67,11 +69,21 @@ Two devices, one truth (plaintext over TLS -- encryption comes in 2b).
 
 - Server: single Rust binary (Axum + Tokio), SQLite storage,
   Litestream backup, behind Caddy (TLS)
+- **Server owns its own SQLite schema and migration system** (separate
+  from the core crate; same `.sql`-file convention — see
+  [tech-stack.md](tech-stack.md))
 - Auth: Argon2id -> HKDF split (auth key to server, master key never
   leaves device)
 - Email + password signup/signin (no verification, no magic link)
+- **Opaque bearer tokens** for session auth (not JWT)
 - Change-log protocol: append-only Loro update blobs per document,
   global sequence number, cursor-based pull, WebSocket push
+- **Binary wire format**: version byte + message type + payload
+- **Flat log table**: global_seq, doc_id, device_id, blob, created_at
+- Blobs treated as **opaque bytes** from day one (identical code path
+  for 2a plaintext and 2b encrypted)
+- API surface (v1): `POST /auth/signup`, `POST /auth/signin`,
+  `WS /sync`
 - Offline queueing, fast reconnect
 - Sync-on-open (+ optional periodic WorkManager refresh); live
   WebSocket while the app is open. No FCM.

@@ -12,3 +12,6 @@ loro = "1"
 rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"
 
+[build-dependencies]
+migration-build = { path = "../migration-build" }
+
