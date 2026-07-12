@@ -18,6 +18,8 @@ export function useSync() {
 
   const connect = useCallback(() => {
     if (!isAuthenticated || !token) return;
+    // Guard: already connected or connecting
+    if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) return;
 
     setStatus('connecting');
     const serverUrl = import.meta.env.VITE_API_URL;
@@ -30,6 +32,7 @@ export function useSync() {
     ws.onopen = () => {
       // Send auth token as first message
       ws.send(token);
+      setStatus('connected');
     };
 
     ws.onmessage = (ev) => {
@@ -74,12 +77,18 @@ export function useSync() {
     };
 
     ws.onclose = () => {
-      setStatus('disconnected');
-      wsRef.current = null;
+      // Guard: only update state if this is still the active WebSocket
+      if (wsRef.current === ws) {
+        setStatus('disconnected');
+        wsRef.current = null;
+      }
     };
 
     ws.onerror = () => {
-      setStatus('error');
+      // Guard: only update state if this is still the active WebSocket
+      if (wsRef.current === ws) {
+        setStatus('error');
+      }
     };
   }, [token, isAuthenticated]);
 
