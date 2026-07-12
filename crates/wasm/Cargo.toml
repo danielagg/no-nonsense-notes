@@ -10,4 +10,6 @@ crate-type = ["cdylib"]
 no-nonsense-notes-core = { path = "../core", default-features = false, features = ["wasm"] }
 wasm-bindgen = "0.2"
 js-sys = "0.3"
-web-sys = { version = "0.3", features = ["console"] }
+web-sys = { version = "0.3", features = ["console", "Window", "Storage"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

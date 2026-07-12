@@ -45,6 +45,12 @@ export async function updateNote(id: string, content: string): Promise<WasmNote>
   return raw as WasmNote;
 }
 
+export async function updateList(id: string, items: string[]): Promise<WasmNote> {
+  const store = await getStore();
+  const raw = store.updateList(id, JSON.stringify(items));
+  return raw as WasmNote;
+}
+
 export async function listAddItem(id: string, item: string): Promise<WasmNote> {
   const store = await getStore();
   const raw = store.listAddItem(id, item);

@@ -1,9 +1,18 @@
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
 use no_nonsense_notes_core::note::{Note, NoteId, NoteType};
 use no_nonsense_notes_core::storage::memory::MemoryStore;
 
+const STORAGE_KEY: &str = "no-nonsense-notes-store";
+
 type JsResult<T> = Result<T, JsValue>;
+
+#[derive(Serialize, Deserialize)]
+struct StoreData {
+    notes: Vec<Note>,
+    next_sort_order: i64,
+}
 
 #[wasm_bindgen]
 pub struct WasmStore {
@@ -14,9 +23,9 @@ pub struct WasmStore {
 impl WasmStore {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Self {
-        Self {
-            inner: MemoryStore::new(),
-        }
+        let mut inner = MemoryStore::new();
+        Self::load_from_storage(&mut inner);
+        Self { inner }
     }
 
     #[wasm_bindgen(js_name = createNote)]
@@ -38,6 +47,7 @@ impl WasmStore {
             .create(nt, fid)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
+        self.save_to_storage();
         note_to_js(&note)
     }
 
@@ -64,6 +74,38 @@ impl WasmStore {
             .update(id, content)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
+        self.save_to_storage();
+        note_to_js(&note)
+    }
+
+    #[wasm_bindgen(js_name = updateList)]
+    pub fn update_list(&mut self, id: &str, items_json: &str) -> JsResult<JsValue> {
+        let id = id
+            .parse::<NoteId>()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let items: Vec<String> = serde_json::from_str(items_json)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        // Remove all existing items, then add new ones
+        let existing = self.inner.get(id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let existing_items: Vec<String> = existing.content_plaintext
+            .split('\n')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+        for item in &existing_items {
+            self.inner.list_remove_item(id, item)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        }
+        for item in &items {
+            self.inner.list_add_item(id, item)
+                .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        }
+
+        self.save_to_storage();
+        let note = self.inner.get(id)
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
         note_to_js(&note)
     }
 
@@ -77,6 +119,7 @@ impl WasmStore {
             .list_add_item(id, item)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
+        self.save_to_storage();
         note_to_js(&note)
     }
 
@@ -90,6 +133,7 @@ impl WasmStore {
             .list_remove_item(id, item)
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
+        self.save_to_storage();
         note_to_js(&note)
     }
 
@@ -100,7 +144,10 @@ impl WasmStore {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         self.inner
             .soft_delete(id)
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+
+        self.save_to_storage();
+        Ok(())
     }
 
     #[wasm_bindgen(js_name = listNotes)]
@@ -126,6 +173,41 @@ impl WasmStore {
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         notes_to_js(&notes)
+    }
+}
+
+impl WasmStore {
+    fn save_to_storage(&self) {
+        let notes = self.inner.list(None).unwrap_or_default();
+        let data = StoreData {
+            notes,
+            next_sort_order: 0,
+        };
+        if let Ok(json) = serde_json::to_string(&data) {
+            if let Some(window) = web_sys::window() {
+                if let Ok(Some(storage)) = window.local_storage() {
+                    let _ = storage.set_item(STORAGE_KEY, &json);
+                }
+            }
+        }
+    }
+
+    fn load_from_storage(inner: &mut MemoryStore) {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let Ok(Some(storage)) = window.local_storage() else {
+            return;
+        };
+        let Ok(Some(json)) = storage.get_item(STORAGE_KEY) else {
+            return;
+        };
+        let Ok(data) = serde_json::from_str::<StoreData>(&json) else {
+            return;
+        };
+        for note in data.notes {
+            inner.import_note(note);
+        }
     }
 }
 

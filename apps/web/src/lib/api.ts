@@ -46,8 +46,7 @@ import {
   getNotes as wasmGetNotes,
   createNote as wasmCreateNote,
   updateNote as wasmUpdateNote,
-  listAddItem as wasmListAddItem,
-  listRemoveItem as wasmListRemoveItem,
+  updateList as wasmUpdateList,
   softDelete as wasmSoftDelete,
   searchNotes as wasmSearchNotes,
   type WasmNote,
@@ -84,8 +83,7 @@ export async function updateNote(
 ): Promise<Note | null> {
   try {
     if (updates.items !== undefined) {
-      const content = updates.items.join('\n');
-      const note = await wasmUpdateNote(id, content);
+      const note = await wasmUpdateList(id, updates.items);
       return wasmToNote(note);
     }
     if (updates.content !== undefined) {

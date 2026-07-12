@@ -25,6 +25,10 @@ impl MemoryStore {
         }
     }
 
+    pub fn import_note(&mut self, note: Note) {
+        self.notes.insert(note.id.to_string(), note);
+    }
+
     pub fn create(
         &mut self,
         note_type: NoteType,

@@ -1650,6 +1650,8 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "no-nonsense-notes-core",
+ "serde",
+ "serde_json",
  "wasm-bindgen",
  "web-sys",
 ]
