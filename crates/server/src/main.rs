@@ -3,6 +3,7 @@ use axum::{
     Router,
 };
 use std::sync::Arc;
+use tower_http::cors::{AllowHeaders, AllowMethods, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 use utoipa::{OpenApi};
@@ -20,6 +21,8 @@ struct ApiDoc;
 
 #[tokio::main]
 async fn main() {
+    dotenvy::dotenv().ok();
+
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
@@ -27,11 +30,21 @@ async fn main() {
     let db_path = std::env::var("DATABASE_URL").unwrap_or_else(|_| "server.db".into());
     let db = Arc::new(storage::Database::open(db_path.as_ref()).expect("failed to open database"));
 
+    let cors_origin = std::env::var("CORS_ORIGIN")
+        .unwrap_or_else(|_| "http://localhost:5173".into());
+    tracing::info!("CORS origin: {}", cors_origin);
+
+    let cors = CorsLayer::new()
+        .allow_origin(cors_origin.parse::<axum::http::HeaderValue>().unwrap())
+        .allow_methods(AllowMethods::any())
+        .allow_headers(AllowHeaders::any());
+
     let app = Router::new()
         .route("/auth/signup", post(auth::signup))
         .route("/auth/signin", post(auth::signin))
         .route("/sync", get(sync::ws_handler))
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
+        .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(db);
 

@@ -65,15 +65,28 @@ no-nonsense-notes/
 ## Building
 
 ```bash
-# Core library
+# Start everything (server + web dev server) from project root
+./scripts/dev.sh
+
+# Or run individually:
 cargo build -p no-nonsense-notes-core
-
-# Run core tests
 cargo test -p no-nonsense-notes-core
-
-# Server
 cargo run -p no-nonsense-notes-server
+
+# Web sandbox (apps/web)
+cd apps/web && npm install && npm run dev
 ```
+
+`scripts/dev.sh` launches both the Rust server on `:3000` and the Vite dev server on `:5173` in one command. Ctrl-C kills both.
+
+### Environment variables
+
+| File | Loaded by | Purpose |
+|---|---|---|
+| `.env.local` (project root) | Rust server (`dotenvy`) | `CORS_ORIGIN`, `DATABASE_URL`, etc. |
+| `apps/web/.env.local` | Vite | `VITE_API_URL` |
+
+Both are gitignored. Copy `.env` → `.env.local` and fill in values for your machine.
 
 ## API Documentation
 
@@ -82,6 +95,17 @@ The server ships with interactive API docs via Swagger UI.
 1. Start the server: `RUST_LOG=info cargo run -p no-nonsense-notes-server`
 2. Open **http://localhost:3000/swagger-ui** in your browser
 3. Raw OpenAPI spec: **http://localhost:3000/api-docs/openapi.json**
+
+### CORS
+
+The server reads `CORS_ORIGIN` to set the allowed origin. Locally, `.env.local` at the project root is loaded automatically via `dotenvy`:
+
+```
+# .env.local (gitignored)
+CORS_ORIGIN=http://localhost:5173
+```
+
+On Render, set `CORS_ORIGIN` as an environment variable to your Vercel frontend URL.
 
 ### Quick test
 
