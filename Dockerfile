@@ -5,6 +5,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
 
+ENV CARGO_BUILD_JOBS=1
 RUN cargo build --release --bin no-nonsense-notes-server
 
 # ── Stage 2: runtime ──────────────────────────────────────────────
