@@ -1,50 +1,17 @@
 use rusqlite::Connection;
 
 use crate::error::ServerError;
-
-struct Migration {
-    version: i64,
-    description: &'static str,
-    sql: &'static str,
-}
+use migration_build::Migration;
 
 include!(concat!(env!("OUT_DIR"), "/migrations.rs"));
 
 pub fn run(conn: &Connection) -> Result<(), ServerError> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS _schema_version (
-            version INTEGER PRIMARY KEY,
-            description TEXT NOT NULL,
-            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-        );",
-    )?;
-
-    let current_version: i64 = conn
-        .query_row(
-            "SELECT COALESCE(MAX(version), 0) FROM _schema_version",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(ServerError::Database)?;
-
-    for migration in MIGRATIONS {
-        if migration.version > current_version {
-            tracing::info!(
-                "applying migration {}: {}",
-                migration.version,
-                migration.description
-            );
-            conn.execute_batch(migration.sql)
-                .map_err(|e| ServerError::Internal(format!("migration {} failed: {}", migration.version, e)))?;
-            conn.execute(
-                "INSERT INTO _schema_version (version, description) VALUES (?1, ?2)",
-                rusqlite::params![migration.version, migration.description],
-            )
-            .map_err(ServerError::Database)?;
-        }
-    }
-
+    migration_build::run(conn, &MIGRATIONS).map_err(ServerError::Database)?;
     Ok(())
+}
+
+pub fn migration_count() -> usize {
+    MIGRATION_COUNT
 }
 
 #[cfg(test)]
@@ -63,7 +30,7 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, migration_count() as i64);
     }
 
     #[test]
@@ -77,7 +44,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, migration_count() as i64);
     }
 
     #[test]

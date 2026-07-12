@@ -2,8 +2,58 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
+/// A single migration, either compiled into the crate via `include!`
+/// or constructed at runtime.
+pub struct Migration {
+    pub version: i64,
+    pub description: &'static str,
+    pub sql: &'static str,
+}
+
+/// Applies all pending migrations in version order.
+/// Returns the final schema version.
+pub fn run(conn: &rusqlite::Connection, migrations: &[Migration]) -> Result<i64, rusqlite::Error> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS _schema_version (
+            version INTEGER PRIMARY KEY,
+            description TEXT NOT NULL,
+            applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );",
+    )?;
+
+    let current: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM _schema_version",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    for m in migrations {
+        if m.version <= current {
+            continue;
+        }
+        conn.execute_batch(m.sql)?;
+        conn.execute(
+            "INSERT INTO _schema_version (version, description) VALUES (?1, ?2)",
+            rusqlite::params![m.version, m.description],
+        )?;
+    }
+
+    let final_version: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM _schema_version",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(0);
+
+    Ok(final_version)
+}
+
 /// Scans `src/storage/migrations/*.sql` in the calling crate's manifest dir,
-/// generates a Rust file in OUT_DIR containing the `MIGRATIONS` static array.
+/// generates a Rust file in OUT_DIR containing the `MIGRATIONS` static array
+/// and `MIGRATION_COUNT` constant.
 ///
 /// Convention: filenames are `NNN_description.sql`
 ///   - version parsed from the numeric prefix
@@ -21,6 +71,8 @@ pub fn generate() {
         .collect();
 
     entries.sort_by_key(|e| e.path());
+
+    let count = entries.len();
 
     let out_dir = env::var("OUT_DIR").unwrap();
     let dest_path = Path::new(&out_dir).join("migrations.rs");
@@ -49,6 +101,7 @@ pub fn generate() {
         content.push('\n');
     }
     content.push_str("];\n");
+    content.push_str(&format!("const MIGRATION_COUNT: usize = {};\n", count));
 
     fs::write(&dest_path, content).unwrap();
 }

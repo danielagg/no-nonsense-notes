@@ -28,6 +28,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use crate::storage::migrations;
     use super::*;
 
     #[test]
@@ -41,6 +42,6 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 2);
+        assert_eq!(count, migrations::migration_count() as i64);
     }
 }
