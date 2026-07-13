@@ -245,7 +245,7 @@ function NoteCard({
         </Button>
       </CardHeader>
       <CardContent className="pointer-events-none relative z-[1] flex flex-1 flex-col px-5 pb-5 pt-4">
-        <CardTitle className="line-clamp-1 text-[15px] font-semibold">
+        <CardTitle className="line-clamp-1 text-[18px] font-semibold">
           {note.title || "Untitled note"}
         </CardTitle>
         <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
