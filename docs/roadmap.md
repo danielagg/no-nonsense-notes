@@ -150,6 +150,40 @@ editing. Accepted v1 limitations, stated in the UI:
 - No sharing or collaboration
 - Android sync only while the app is open
 
+## Web -- Development & Testing Surface
+
+Ships alongside Phase 2a as a sandbox for testing auth, sync, and the
+Rust core in a browser. Not a v1 user-facing platform, but a real
+build target with CI, deployment, and tests.
+
+### Deliverables
+
+- Rust core compiled to WASM (`wasm32-unknown-unknown`)
+- React + Vite + TanStack Query web app (`apps/web/`)
+- `MemoryStore` + `localStorage` persistence (not SQLite -- see
+  [tech-stack.md](tech-stack.md) Watch-Outs)
+- Auth page (signup/signin against the real server)
+- Note CRUD (create, edit, delete, search) via WASM
+- List notes with checkbox toggle (`[x] ` prefix convention)
+- Sync badge (WebSocket connection status, pull button)
+- CI: `wasm-pack build` + `wasm-pack test --headless --chrome` +
+  `vitest` + Vercel deploy
+
+### Accepted limitations (web-only)
+
+- No SQLite, FTS5, folders, tags, or settings
+- `localStorage` ~5MB cap (Loro blobs serialized as JSON)
+- No E2E encryption (crypto modules are stubs)
+- Sync hook connects but does not wire pulled blobs into the store
+  (server-side sync works; client-side integration is Phase 2a)
+
+### Exit criteria
+
+- Web app builds and deploys via CI
+- Auth + note CRUD works end-to-end in a browser
+- WASM runtime tests pass in CI (catches chrono/getrandom panics)
+- Web unit tests (vitest) pass in CI
+
 ## Open questions (not blocking v1)
 
 - **Conflict resolution UX.** CRDT handles data merging automatically,
@@ -162,7 +196,9 @@ editing. Accepted v1 limitations, stated in the UI:
 
 - **iOS** -- cheap after macOS (same SwiftUI + TextKit 2 editor)
 - **Recovery phrase** (12/24 words)
-- **Web** -- Rust core to WASM (see WASM watch-out in tech-stack.md)
+- **Web as user-facing platform** -- migrate from `MemoryStore` +
+  `localStorage` to `wa-sqlite` / `sql.js`, add folders/tags/settings,
+  enable E2E encryption, wire sync client to store
 - Sync payload compression (careful: compress-then-encrypt size leaks)
 - Attachments, image support
 - Shared notebooks, real-time collaborative editing

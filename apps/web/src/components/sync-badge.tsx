@@ -24,7 +24,7 @@ export function SyncBadge() {
         <span className="text-foreground/70">{STATUS_LABELS[status]}</span>
         {lastSeq > 0 && (
           <button
-            onClick={() => pull(lastSeq)}
+            onClick={() => pull()}
             className="text-foreground/70 hover:text-foreground underline"
             title="Pull latest"
           >

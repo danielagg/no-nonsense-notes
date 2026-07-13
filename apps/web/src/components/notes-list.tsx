@@ -22,7 +22,7 @@ export function NotesList() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: async (id: string) => { deleteNote(id); },
+    mutationFn: async (id: string) => { await deleteNote(id); },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       setSelectedNote(null);

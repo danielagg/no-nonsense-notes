@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { updateNote, type Note } from '@/lib/api';
+import { updateMarkdownNote, updateListNote, type Note } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -13,12 +13,16 @@ interface Props {
 
 export function NoteEditor({ note, onBack }: Props) {
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [items, setItems] = useState(note.items ?? []);
 
   const saveMutation = useMutation({
-    mutationFn: () => Promise.resolve(updateNote(note.id, { title, content, items })),
+    mutationFn: () => {
+      if (note.type === 'list') {
+        return updateListNote(note.id, items);
+      }
+      return updateMarkdownNote(note.id, content);
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
       onBack();
@@ -57,12 +61,7 @@ export function NoteEditor({ note, onBack }: Props) {
         </Button>
       </div>
 
-      <Input
-        value={title}
-        onChange={(e) => setTitle(e.target.value)}
-        placeholder="Note title..."
-        className="text-lg font-semibold mb-4"
-      />
+      <h2 className="text-lg font-semibold mb-4 text-muted-foreground">{note.title}</h2>
 
       {note.type === 'markdown' ? (
         <Textarea

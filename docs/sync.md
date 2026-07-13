@@ -53,6 +53,88 @@ incompatible with a blind relay -- hence this design:
 - **macOS:** persistent WebSocket while running; sync is effectively
   real-time
 
+## Architecture: shared protocol, platform-specific transport
+
+One sync mechanism. The protocol (wire format encode/decode) and merge
+logic live in the Rust core. Only the WebSocket transport differs by
+platform — WASM has no threads or blocking I/O, so it uses
+`web-sys::WebSocket` (async, callback-based). Native apps use
+`tungstenite` on a dedicated `std::thread`.
+
+```
+crates/core/src/sync/
+  protocol.rs    — wire format encode/decode (pure, works on WASM + native)
+  client.rs      — native client (std::thread + tungstenite) [stub]
+
+crates/wasm/src/lib.rs
+  — WASM bindings: encodePushFrame, decodePushResponse,
+    encodePullRequest, decodePullResponse, applyRemoteUpdate,
+    getSyncCursor, setSyncCursor, getDeviceId, exportNoteBlob
+
+apps/web/src/hooks/use-sync.ts
+  — thin: WebSocket transport calls Rust for all framing/merge
+```
+
+### Sync blob format
+
+The server treats blobs as opaque bytes. Inside each blob:
+
+```
+[note_type:1][loro_blob:N]
+```
+
+- `note_type`: 0=markdown, 1=list (enables receiver to extract content
+  without guessing the Loro container)
+- `loro_blob`: Loro snapshot or update bytes
+
+The server never inspects this — it stores and relays the blob as-is.
+
+## Current implementation status
+
+### Server (done)
+
+- `crates/server/src/sync.rs` -- WebSocket endpoint, binary push,
+  text-based pull, auth token verification
+- Append-only `updates` table in server SQLite
+- Binary wire format: `[version:1][type:1][doc_id:16][device_id:16][blob_len:4][blob:N]`
+- Pull response: text `seq:N\ndoc_id:base64_blob\n...`
+
+### Core protocol (done)
+
+- `crates/core/src/sync/protocol.rs` -- full encode/decode:
+  `encode_push_frame`, `decode_push_response`, `encode_pull_request`,
+  `decode_pull_response`, `encode_sync_blob`, `decode_sync_blob`
+- `crates/core/src/storage/memory.rs` -- `apply_remote_update`: merges
+  remote Loro blobs into existing notes or creates new notes from
+  remote
+- Unit tested: 12 protocol tests + 3 `apply_remote_update` tests
+
+### Web sync (done)
+
+- `apps/web/src/hooks/use-sync.ts` -- WebSocket transport only;
+  all protocol encode/decode and merge logic calls into Rust via WASM
+- `apps/web/src/lib/sync-manager.ts` -- bridges mutations to push:
+  `api.ts` calls `pushNote` after each local mutation
+- `apps/web/src/lib/wasm.ts` -- exposes `encodePushFrame`,
+  `decodePullResponse`, `applyRemoteUpdate`, sync cursor, device ID
+- Flow: local mutation → `pushNote` → `encodePushFrame` (Rust) →
+  WebSocket send → server stores → other device pulls →
+  `decodePullResponse` (Rust) → `applyRemoteUpdate` (Rust) →
+  `MemoryStore` merges Loro blob → note list updates
+- Sync cursor persisted in `localStorage` via WASM
+- Device ID generated per browser, persisted in `localStorage`
+- WASM runtime tests: 13 tests including protocol encode/decode and
+  `apply_remote_update`
+
+### Native client (stub)
+
+- `crates/core/src/sync/client.rs` -- 2-line comment, no implementation
+- The WebSocket thread, offline queue, reconnect logic, and
+  `SyncDelegate` callback interface described in
+  [tech-stack.md](tech-stack.md) are all design-only
+- Will use the same `protocol.rs` for encode/decode — only transport
+  differs (tungstenite vs web-sys::WebSocket)
+
 ## Open design items
 
 - **Tombstones / deletion under E2E.** A deleted note must eventually

@@ -60,16 +60,49 @@ Runs in CI without real devices:
 - Zeroization test: key material memory reads as zeroed after drop
   (using mlock/mprotect if available, else best-effort)
 
+## Web tests (`vitest`)
+
+The web app has a vitest test suite in `apps/web/src/`. Tests mock the
+WASM module and verify the TypeScript wrapper logic:
+
+- API routing: `updateMarkdownNote` calls `wasmUpdateNote`, not
+  `wasmUpdateList` (and vice versa for list notes)
+- `wasmToNote` mapping: markdown notes get `items=undefined`, list
+  notes get `items` array from `contentPlaintext.split('\n')`
+- Auth, search, delete call the right WASM methods
+
+Run: `npm run test` (or `npm run test:watch` for watch mode) in
+`apps/web/`.
+
+## WASM runtime tests (`wasm-pack test`)
+
+The WASM crate has `wasm-bindgen-test` tests that run in a headless
+browser. These catch platform-specific issues that `cargo check` and
+`cargo test` miss:
+
+- `chrono::Utc::now()` panics on `wasm32-unknown-unknown` without the
+  `wasmbind` feature -- the create-note test catches this
+- `getrandom` needs `wasm_js` backend -- UUIDv7 generation exercises this
+- Note CRUD round-trips through the `WasmStore` + `MemoryStore` stack
+
+Run: `wasm-pack test --headless --chrome --cargo-arg=--no-default-features
+crates/wasm` (requires Chrome installed).
+
 ## CI layout (GitHub Actions)
 
 ```
 Linux runner:
+  - cargo check --workspace --all-features
+  - cargo check --no-default-features --target wasm32-unknown-unknown -p no-nonsense-notes-wasm
   - cargo test --workspace
-  - cargo clippy --workspace -- -D warnings
-  - cargo fmt --check
+  - wasm-pack build --target web --out-dir pkg crates/wasm
+  - wasm-pack test --headless --chrome --cargo-arg=--no-default-features crates/wasm
+  - npm run lint (apps/web)
+  - npm run test (apps/web, vitest)
+  - npm run build (apps/web, tsc + vite)
 
 Deploy (only if tests pass):
-  - Trigger Render deploy via webhook
+  - Trigger Vercel deploy via webhook
 ```
 
 No separate QA environment for v1. Dogfooding on the primary device

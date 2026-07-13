@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 no-nonsense-notes-core = { path = "../core", default-features = false, features = ["wasm"] }
@@ -13,3 +13,7 @@ js-sys = "0.3"
 web-sys = { version = "0.3", features = ["console", "Window", "Storage"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]
+wasm-bindgen-test = "0.3"

@@ -1,24 +1,45 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { registerPush } from '@/lib/sync-manager';
+import {
+  applyRemoteUpdate,
+  getSyncCursor,
+  setSyncCursor,
+  getDeviceId,
+  exportNoteBlob,
+  encodePushFrame,
+  decodePushResponse,
+  encodePullRequest,
+  decodePullResponse,
+} from '@/lib/wasm';
 
 export type SyncStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
-
-interface SyncEntry {
-  docId: string;
-  blob: string; // base64
-  globalSeq: number;
-}
 
 export function useSync() {
   const { token, isAuthenticated } = useAuth();
   const wsRef = useRef<WebSocket | null>(null);
   const [status, setStatus] = useState<SyncStatus>('disconnected');
   const [lastSeq, setLastSeq] = useState(0);
-  const [entries, setEntries] = useState<SyncEntry[]>([]);
+
+  const pull = useCallback(async () => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+
+    const cursor = await getSyncCursor();
+    const pullText = await encodePullRequest(cursor);
+    wsRef.current.send(pullText);
+  }, []);
+
+  const push = useCallback(async (docId: string, noteType: string) => {
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
+
+    const deviceId = await getDeviceId();
+    const loroBlob = await exportNoteBlob(docId);
+    const frame = await encodePushFrame(docId, deviceId, noteType, loroBlob);
+    wsRef.current.send(frame.buffer as ArrayBuffer);
+  }, []);
 
   const connect = useCallback(() => {
     if (!isAuthenticated || !token) return;
-    // Guard: already connected or connecting
     if (wsRef.current && wsRef.current.readyState <= WebSocket.OPEN) return;
 
     setStatus('connecting');
@@ -27,57 +48,49 @@ export function useSync() {
       ? serverUrl.replace(/^http/, 'ws')
       : `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`;
     const ws = new WebSocket(`${wsUrl}/sync`);
+    ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
     ws.onopen = () => {
-      // Send auth token as first message
       ws.send(token);
       setStatus('connected');
+      pull();
     };
 
-    ws.onmessage = (ev) => {
-      const data = ev.data;
-      if (typeof data === 'string') {
-        if (data === 'unauthorized') {
+    ws.onmessage = async (ev) => {
+      if (typeof ev.data === 'string') {
+        if (ev.data === 'unauthorized') {
           setStatus('error');
           ws.close();
           return;
         }
-        // Parse pull response: "seq:N\ndoc_id:base64\n..."
-        if (data.startsWith('seq:')) {
-          const lines = data.split('\n');
-          const seqMatch = lines[0].match(/^seq:(\d+)$/);
-          if (seqMatch) {
-            setLastSeq(parseInt(seqMatch[1], 10));
-          }
-          const newEntries: SyncEntry[] = [];
-          for (let i = 1; i < lines.length; i++) {
-            const colonIdx = lines[i].indexOf(':');
-            if (colonIdx > 0) {
-              newEntries.push({
-                docId: lines[i].substring(0, colonIdx),
-                blob: lines[i].substring(colonIdx + 1),
-                globalSeq: 0,
-              });
+        if (ev.data.startsWith('seq:')) {
+          try {
+            const response = await decodePullResponse(ev.data);
+            await setSyncCursor(response.currentSeq);
+            setLastSeq(response.currentSeq);
+
+            for (const entry of response.entries) {
+              await applyRemoteUpdate(entry.docId, entry.noteType, entry.loroBlob);
             }
-          }
-          if (newEntries.length > 0) {
-            setEntries((prev) => [...prev, ...newEntries]);
+          } catch (err) {
+            console.error('pull response decode failed:', err);
           }
         }
       }
-      // Binary push response: 8 bytes global_seq LE
-      if (data instanceof ArrayBuffer) {
-        const view = new DataView(data);
-        if (data.byteLength === 8) {
-          const seq = Number(view.getBigUint64(0, true));
+
+      if (ev.data instanceof ArrayBuffer) {
+        try {
+          const seq = await decodePushResponse(new Uint8Array(ev.data));
+          await setSyncCursor(seq);
           setLastSeq(seq);
+        } catch (err) {
+          console.error('push response decode failed:', err);
         }
       }
     };
 
     ws.onclose = () => {
-      // Guard: only update state if this is still the active WebSocket
       if (wsRef.current === ws) {
         setStatus('disconnected');
         wsRef.current = null;
@@ -85,56 +98,35 @@ export function useSync() {
     };
 
     ws.onerror = () => {
-      // Guard: only update state if this is still the active WebSocket
       if (wsRef.current === ws) {
         setStatus('error');
       }
     };
-  }, [token, isAuthenticated]);
+  }, [token, isAuthenticated, pull]);
 
   const disconnect = useCallback(() => {
     wsRef.current?.close();
     wsRef.current = null;
   }, []);
 
-  const pull = useCallback((since: number) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(`pull:${since}`);
-    }
-  }, []);
-
-  const push = useCallback((docId: string, deviceId: string, blob: Uint8Array) => {
-    if (wsRef.current?.readyState !== WebSocket.OPEN) return;
-
-    // Binary format: [version:1][type:1][doc_id:16][device_id:16][blob_len:4][blob:N]
-    const docIdBytes = hexToBytes(docId);
-    const deviceIdBytes = hexToBytes(deviceId);
-    const payload = new Uint8Array(2 + 16 + 16 + 4 + blob.length);
-    payload[0] = 1; // version
-    payload[1] = 1; // push
-    payload.set(docIdBytes, 2);
-    payload.set(deviceIdBytes, 18);
-    new DataView(payload.buffer).setUint32(34, blob.length, true);
-    payload.set(blob, 38);
-    wsRef.current.send(payload);
-  }, []);
-
-  // Auto-connect when authenticated
   useEffect(() => {
     if (isAuthenticated) {
+      getSyncCursor().then(setLastSeq);
       connect();
     }
-    return () => disconnect();
+    return () => {
+      disconnect();
+      registerPush(null);
+    };
   }, [isAuthenticated, connect, disconnect]);
 
-  return { status, lastSeq, entries, connect, disconnect, pull, push };
-}
+  useEffect(() => {
+    if (status === 'connected') {
+      registerPush(push);
+    } else {
+      registerPush(null);
+    }
+  }, [status, push]);
 
-function hexToBytes(hex: string): Uint8Array {
-  const clean = hex.replace(/-/g, '');
-  const bytes = new Uint8Array(16);
-  for (let i = 0; i < 16; i++) {
-    bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
-  }
-  return bytes;
+  return { status, lastSeq, pull, push, connect, disconnect };
 }

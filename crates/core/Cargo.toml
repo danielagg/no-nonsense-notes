@@ -6,7 +6,7 @@ edition.workspace = true
 [features]
 default = ["sqlite"]
 sqlite = ["dep:rusqlite", "dep:migration-build"]
-wasm = ["uuid/js"]
+wasm = ["uuid/js", "chrono/wasmbind"]
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -15,6 +15,7 @@ uuid = { version = "1", features = ["v7", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 loro = "1"
 sha2 = "0.10"
+base64 = "0.22"
 rusqlite = { version = "0.40", features = ["bundled"], optional = true }
 migration-build = { path = "../migration-build", optional = true }
 

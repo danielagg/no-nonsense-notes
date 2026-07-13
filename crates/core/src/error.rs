@@ -20,4 +20,7 @@ pub enum StorageError {
 
     #[error("parse error: {0}")]
     Parse(String),
+
+    #[error("protocol error: {0}")]
+    Protocol(String),
 }

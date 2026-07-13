@@ -29,6 +29,14 @@ impl MemoryStore {
         self.notes.insert(note.id.to_string(), note);
     }
 
+    pub fn next_sort_order(&self) -> i64 {
+        self.next_sort_order
+    }
+
+    pub fn set_next_sort_order(&mut self, val: i64) {
+        self.next_sort_order = val;
+    }
+
     pub fn create(
         &mut self,
         note_type: NoteType,
@@ -160,6 +168,49 @@ impl MemoryStore {
         Ok(note)
     }
 
+    pub fn list_replace_items(&mut self, id: NoteId, new_items: &[String]) -> Result<Note, StorageError> {
+        let existing = self.get(id)?;
+        if existing.note_type != NoteType::List {
+            return Err(StorageError::WrongNoteType {
+                expected: "list".to_string(),
+                actual: existing.note_type.as_str().to_string(),
+            });
+        }
+
+        let doc = LoroDoc::from_snapshot(&existing.content_loro_blob)
+            .map_err(|e| StorageError::Loro(format!("failed to load Loro doc: {e}")))?;
+        let list = doc.get_list("items");
+
+        let current_len = list.len();
+        if current_len > 0 {
+            list.delete(0, current_len)
+                .map_err(|e| StorageError::Loro(format!("failed to clear list: {e}")))?;
+        }
+        for item in new_items {
+            list.push(item.as_str())
+                .map_err(|e| StorageError::Loro(format!("failed to push list item: {e}")))?;
+        }
+
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
+
+        let plaintext = new_items.join("\n");
+        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+        let title = list_title(new_items);
+        let now = chrono::Utc::now();
+
+        let mut note = existing;
+        note.title = title;
+        note.content_plaintext = plaintext;
+        note.content_loro_blob = loro_blob;
+        note.content_hash = content_hash;
+        note.updated_at = now;
+
+        self.notes.insert(id.to_string(), note.clone());
+        Ok(note)
+    }
+
     pub fn list_remove_item(&mut self, id: NoteId, item: &str) -> Result<Note, StorageError> {
         let existing = self.get(id)?;
         if existing.note_type != NoteType::List {
@@ -201,6 +252,75 @@ impl MemoryStore {
 
         self.notes.insert(id.to_string(), note.clone());
         Ok(note)
+    }
+
+    pub fn apply_remote_update(
+        &mut self,
+        note_id: NoteId,
+        note_type: NoteType,
+        update_blob: &[u8],
+    ) -> Result<Note, StorageError> {
+        if let Some(existing) = self.notes.get(&note_id.to_string()).cloned() {
+            let doc = if existing.content_loro_blob.is_empty() {
+                LoroDoc::new()
+            } else {
+                LoroDoc::from_snapshot(&existing.content_loro_blob)
+                    .map_err(|e| StorageError::Loro(format!("failed to load doc: {e}")))?
+            };
+            doc.import(update_blob)
+                .map_err(|e| StorageError::Loro(format!("failed to import update: {e}")))?;
+
+            let loro_blob = doc
+                .export(ExportMode::Snapshot)
+                .map_err(|e| StorageError::Loro(e.to_string()))?;
+
+            let (plaintext, title) = extract_content(&doc, note_type);
+            let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+            let now = chrono::Utc::now();
+
+            let mut note = existing;
+            note.note_type = note_type;
+            note.title = title;
+            note.content_plaintext = plaintext;
+            note.content_loro_blob = loro_blob;
+            note.content_hash = content_hash;
+            note.updated_at = now;
+
+            self.notes.insert(note_id.to_string(), note.clone());
+            Ok(note)
+        } else {
+            let doc = LoroDoc::new();
+            doc.import(update_blob)
+                .map_err(|e| StorageError::Loro(format!("failed to import update: {e}")))?;
+
+            let loro_blob = doc
+                .export(ExportMode::Snapshot)
+                .map_err(|e| StorageError::Loro(e.to_string()))?;
+
+            let (plaintext, title) = extract_content(&doc, note_type);
+            let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+            let now = chrono::Utc::now();
+            let sort_order = self.next_sort_order;
+            self.next_sort_order += 1;
+
+            let note = Note {
+                id: note_id,
+                folder_id: None,
+                note_type,
+                title,
+                content_plaintext: plaintext,
+                content_loro_blob: loro_blob,
+                content_hash,
+                created_at: now,
+                updated_at: now,
+                is_deleted: false,
+                deleted_at: None,
+                sort_order,
+            };
+
+            self.notes.insert(note_id.to_string(), note.clone());
+            Ok(note)
+        }
     }
 
     pub fn soft_delete(&mut self, id: NoteId) -> Result<(), StorageError> {
@@ -255,6 +375,22 @@ fn list_items_from_doc(doc: &LoroDoc) -> Vec<String> {
 
 fn list_title(items: &[String]) -> String {
     items.first().cloned().unwrap_or_else(|| "List".to_string())
+}
+
+fn extract_content(doc: &LoroDoc, note_type: NoteType) -> (String, String) {
+    match note_type {
+        NoteType::Markdown => {
+            let text = doc.get_text("content").to_string();
+            let title = Note::derive_title(&text);
+            (text, title)
+        }
+        NoteType::List => {
+            let items = list_items_from_doc(doc);
+            let plaintext = items.join("\n");
+            let title = list_title(&items);
+            (plaintext, title)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -329,6 +465,49 @@ mod tests {
     }
 
     #[test]
+    fn list_replace_items_replaces_all() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::List, None).unwrap();
+        let id = note.id;
+
+        store.list_add_item(id, "milk").unwrap();
+        store.list_add_item(id, "eggs").unwrap();
+
+        let new_items = vec!["coffee".to_string(), "sugar".to_string(), "flour".to_string()];
+        let note = store.list_replace_items(id, &new_items).unwrap();
+        assert_eq!(note.content_plaintext, "coffee\nsugar\nflour");
+        assert_eq!(note.title, "coffee");
+
+        let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
+        let list = doc.get_list("items");
+        assert_eq!(list.len(), 3);
+    }
+
+    #[test]
+    fn list_replace_items_rejects_markdown() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::Markdown, None).unwrap();
+        let err = store.list_replace_items(note.id, &["x".to_string()]).unwrap_err();
+        assert!(matches!(err, StorageError::WrongNoteType { .. }));
+    }
+
+    #[test]
+    fn list_replace_items_empty_clears_list() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::List, None).unwrap();
+        store.list_add_item(note.id, "milk").unwrap();
+        store.list_add_item(note.id, "eggs").unwrap();
+
+        let note = store.list_replace_items(note.id, &[]).unwrap();
+        assert_eq!(note.content_plaintext, "");
+        assert_eq!(note.title, "List");
+
+        let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
+        let list = doc.get_list("items");
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
     fn list_remove_missing_errors() {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::List, None).unwrap();
@@ -383,5 +562,68 @@ mod tests {
 
         let filtered = store.list(Some(folder_id)).unwrap();
         assert_eq!(filtered.len(), 2);
+    }
+
+    #[test]
+    fn apply_remote_update_creates_new_note() {
+        let mut store = MemoryStore::new();
+
+        let doc = LoroDoc::new();
+        let text = doc.get_text("content");
+        text.insert(0, "# Remote Note\n\nHello from another device").unwrap();
+        let blob = doc.export(ExportMode::Snapshot).unwrap();
+
+        let remote_id = NoteId::now_v7();
+        let note = store
+            .apply_remote_update(remote_id, NoteType::Markdown, &blob)
+            .unwrap();
+
+        assert_eq!(note.id, remote_id);
+        assert_eq!(note.note_type, NoteType::Markdown);
+        assert_eq!(note.title, "Remote Note");
+        assert!(note.content_plaintext.contains("Hello from another device"));
+
+        let fetched = store.get(remote_id).unwrap();
+        assert_eq!(fetched.id, remote_id);
+    }
+
+    #[test]
+    fn apply_remote_update_merges_into_existing() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::Markdown, None).unwrap();
+        store.update(note.id, "# Original\n\nHello").unwrap();
+
+        let doc = LoroDoc::from_snapshot(&store.get(note.id).unwrap().content_loro_blob).unwrap();
+        let text = doc.get_text("content");
+        let pos = text.to_string().len();
+        text.insert(pos, "\n\nAppended by remote").unwrap();
+        let update_blob = doc.export(ExportMode::Snapshot).unwrap();
+
+        let merged = store
+            .apply_remote_update(note.id, NoteType::Markdown, &update_blob)
+            .unwrap();
+
+        assert!(merged.content_plaintext.contains("Hello"));
+        assert!(merged.content_plaintext.contains("Appended by remote"));
+    }
+
+    #[test]
+    fn apply_remote_update_list_note() {
+        let mut store = MemoryStore::new();
+
+        let doc = LoroDoc::new();
+        let list = doc.get_list("items");
+        list.push("milk").unwrap();
+        list.push("eggs").unwrap();
+        let blob = doc.export(ExportMode::Snapshot).unwrap();
+
+        let remote_id = NoteId::now_v7();
+        let note = store
+            .apply_remote_update(remote_id, NoteType::List, &blob)
+            .unwrap();
+
+        assert_eq!(note.note_type, NoteType::List);
+        assert_eq!(note.content_plaintext, "milk\neggs");
+        assert_eq!(note.title, "milk");
     }
 }

@@ -63,6 +63,12 @@ Overview document. Deep dives live in their own files:
 
 ## Threading model
 
+The sync protocol (wire format encode/decode, merge logic) lives in
+the Rust core and is shared across all platforms. Only the WebSocket
+transport differs:
+
+### Native (Android, macOS, iOS)
+
 The Rust core is synchronous; the WebSocket runs on a dedicated
 `std::thread`. When updates arrive, Rust calls back into the native
 layer via a **UniFFI callback interface** (`SyncDelegate` trait).
@@ -75,6 +81,15 @@ This keeps the WebSocket thread isolated from the UI layer. The
 callback interface is defined in the UniFFI UDL and generated for
 both Kotlin and Swift bindings. No async runtime leaks into the
 client core -- Tokio stays server-side only.
+
+### Web (WASM)
+
+WASM has no threads or blocking I/O. The WebSocket transport uses
+`web-sys::WebSocket` (async, callback-based) in TypeScript. All
+protocol encode/decode and merge logic calls into Rust via WASM
+bindings -- the same `crates/core/src/sync/protocol.rs` that native
+apps use. The TS layer is thin: it owns the WebSocket connection and
+delegates framing to Rust.
 
 ## Native Apps
 
@@ -95,11 +110,24 @@ Thin presentation layers over the Rust core. Editor details:
 
 - SwiftUI (chrome) + TextKit 2 editor -- cheap after macOS
 
-### Web (Later)
+### Web
 
-- Rust compiled to WASM
-- Thin JavaScript wrapper
-- Shared business logic with native apps
+- Rust compiled to WASM (`wasm32-unknown-unknown`)
+- Thin TypeScript wrapper (`apps/web/` — React + Vite + TanStack Query)
+- Uses `MemoryStore` (in-memory HashMap) with `localStorage` persistence,
+  not SQLite — `rusqlite`'s bundled SQLite does not compile to WASM
+  cleanly (see Watch-Outs below). This means:
+  - No FTS5; search is linear `contains()` scan (fine for small note sets)
+  - No folders, tags, or settings tables — `MemoryStore` only tracks notes
+  - `localStorage` has a ~5MB cap; Loro blobs are serialized as JSON
+    (base64-encoded). Large notes will hit this limit.
+  - These are accepted trade-offs for the web platform's role as a
+    development/testing surface. Migrating to `wa-sqlite` or `sql.js` is
+    post-v1.
+- `chrono` uses the `wasmbind` feature (gets time via `js-sys` / `Date.now`)
+- `getrandom` 0.3 requires `--cfg getrandom_backend="wasm_js"` for
+  `wasm32-unknown-unknown`; configured in `.cargo/config.toml`
+- Deployed to Vercel via CI (auto-deploy on push to `main`)
 
 ## Backend
 
@@ -174,6 +202,8 @@ devices without understanding document contents.
 See [roadmap.md](roadmap.md). Short version: Phase 0 Rust core (local
 only) -> Phase 1 Android app (local only) -> Phase 2a sync protocol ->
 Phase 2b E2E encryption -> Phase 3 macOS = v1. iOS and Web later.
+Web ships early as a development/testing surface (auth + note CRUD +
+sync badge), not as a v1 user-facing platform.
 
 ## Costs (accepted)
 
@@ -193,15 +223,16 @@ Phase 2b E2E encryption -> Phase 3 macOS = v1. iOS and Web later.
 ## Architecture
 
 ```text
-              Jetpack Compose          SwiftUI + TextKit 2         Web (WASM)
+              Jetpack Compose          SwiftUI + TextKit 2      Web (WASM + React)
                        │                        │                        │
-                   UniFFI                   UniFFI                JS bindings
-                       └──────────────┬─────────┴──────────────┐
+                   UniFFI                   UniFFI             JS bindings (wasm-bindgen)
+                       └──────────────┬─────────┴──────────────┘
                                       │
                            Shared Rust Core
-    ┌─────────────────────────────────────────────────────────────────────┐
-    │  SQLite │ Loro │ Sync │ Encryption │ Search │ Markdown │ Import     │
-    └─────────────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │  SQLite*  │ Loro │ Sync │ Encryption │ Search │ Markdown │ Import    │
+  └──────────────────────────────────────────────────────────────────────┘
+                           *WASM uses MemoryStore + localStorage instead
                                       │
                     Encrypted change-log protocol (own, thin)
                                       │
@@ -231,5 +262,7 @@ item stays here:
 
 - **SQLite + WASM (deferred).** `rusqlite`'s bundled SQLite compiles to
   `wasm32` less cleanly than the pure-Rust crypto crates do -- needs a
-  WASM-capable C toolchain. Solvable (prior art: `wa-sqlite`, sql.js);
-  not a v1 concern since Web is later.
+  WASM-capable C toolchain. The web platform uses `MemoryStore` +
+  `localStorage` instead. Solvable (prior art: `wa-sqlite`, `sql.js`);
+  post-v1 migration. The `MemoryStore` API mirrors `NoteRepository`
+  1:1 so the web app can switch when the storage layer is ready.

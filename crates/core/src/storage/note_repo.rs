@@ -158,6 +158,50 @@ impl<'a> NoteRepository<'a> {
         self.get(id)
     }
 
+    pub fn list_replace_items(&self, id: NoteId, new_items: &[String]) -> Result<Note, StorageError> {
+        let existing = self.get(id)?;
+        if existing.note_type != NoteType::List {
+            return Err(StorageError::WrongNoteType {
+                expected: "list".to_string(),
+                actual: existing.note_type.as_str().to_string(),
+            });
+        }
+
+        let doc = LoroDoc::from_snapshot(&existing.content_loro_blob)
+            .map_err(|e| StorageError::Loro(format!("failed to load Loro doc: {e}")))?;
+        let list = doc.get_list("items");
+
+        let current_len = list.len();
+        if current_len > 0 {
+            list.delete(0, current_len)
+                .map_err(|e| StorageError::Loro(format!("failed to clear list: {e}")))?;
+        }
+        for item in new_items {
+            list.push(item.as_str())
+                .map_err(|e| StorageError::Loro(format!("failed to push list item: {e}")))?;
+        }
+
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
+
+        let plaintext = new_items.join("\n");
+        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+        let title = list_title(new_items);
+        let now = chrono::Utc::now();
+
+        self.conn.execute(
+            "UPDATE notes SET title = ?1, content_plaintext = ?2, content_loro_blob = ?3, content_hash = ?4, updated_at = ?5 WHERE id = ?6",
+            params![title, plaintext, loro_blob, content_hash, now.to_rfc3339(), id.to_string()],
+        )?;
+
+        if let Some(rowid) = self.get_rowid(id)? {
+            self.sync_fts(rowid, &title, &plaintext)?;
+        }
+
+        self.get(id)
+    }
+
     pub fn list_remove_item(&self, id: NoteId, item: &str) -> Result<Note, StorageError> {
         let existing = self.get(id)?;
         if existing.note_type != NoteType::List {
@@ -432,6 +476,58 @@ mod tests {
         let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
         let list = doc.get_list("items");
         assert_eq!(list.len(), 2);
+    }
+
+    #[test]
+    fn list_replace_items_replaces_all() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::List, None).unwrap();
+        repo.list_add_item(note.id, "milk").unwrap();
+        repo.list_add_item(note.id, "eggs").unwrap();
+
+        let new_items = vec!["coffee".to_string(), "sugar".to_string()];
+        let note = repo.list_replace_items(note.id, &new_items).unwrap();
+        assert_eq!(note.content_plaintext, "coffee\nsugar");
+        assert_eq!(note.title, "coffee");
+
+        let results = repo.search("coffee").unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn list_replace_items_rejects_markdown() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::Markdown, None).unwrap();
+        let err = repo.list_replace_items(note.id, &["x".to_string()]).unwrap_err();
+        assert!(matches!(err, StorageError::WrongNoteType { .. }));
+    }
+
+    #[test]
+    fn list_replace_items_empty_clears_list() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::List, None).unwrap();
+        repo.list_add_item(note.id, "milk").unwrap();
+        repo.list_add_item(note.id, "eggs").unwrap();
+
+        let note = repo.list_replace_items(note.id, &[]).unwrap();
+        assert_eq!(note.content_plaintext, "");
+        assert_eq!(note.title, "List");
+
+        let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
+        let list = doc.get_list("items");
+        assert_eq!(list.len(), 0);
     }
 
     #[test]

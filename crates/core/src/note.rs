@@ -16,6 +16,21 @@ impl NoteType {
             Self::List => "list",
         }
     }
+
+    pub fn as_byte(self) -> u8 {
+        match self {
+            Self::Markdown => 0,
+            Self::List => 1,
+        }
+    }
+
+    pub fn from_byte(b: u8) -> Option<Self> {
+        match b {
+            0 => Some(Self::Markdown),
+            1 => Some(Self::List),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for NoteType {

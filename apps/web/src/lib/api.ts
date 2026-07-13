@@ -14,7 +14,6 @@ export interface Note {
   updated_at: string;
 }
 
-// Auth API (server-backed)
 export async function signup(email: string, password: string): Promise<AuthResponse> {
   const res = await fetch(`${API_BASE}/auth/signup`, {
     method: 'POST',
@@ -41,7 +40,6 @@ export async function signin(email: string, password: string): Promise<AuthRespo
   return res.json();
 }
 
-// WASM-backed note storage
 import {
   getNotes as wasmGetNotes,
   createNote as wasmCreateNote,
@@ -51,6 +49,7 @@ import {
   searchNotes as wasmSearchNotes,
   type WasmNote,
 } from './wasm';
+import { pushNote } from './sync-manager';
 
 function wasmToNote(w: WasmNote): Note {
   const isList = w.noteType === 'list';
@@ -74,26 +73,23 @@ export async function getNotes(): Promise<Note[]> {
 
 export async function createNote(type: 'markdown' | 'list'): Promise<Note> {
   const note = await wasmCreateNote(type);
-  return wasmToNote(note);
+  const result = wasmToNote(note);
+  await pushNote(result.id, type);
+  return result;
 }
 
-export async function updateNote(
-  id: string,
-  updates: Partial<Pick<Note, 'content' | 'items'>>,
-): Promise<Note | null> {
-  try {
-    if (updates.items !== undefined) {
-      const note = await wasmUpdateList(id, updates.items);
-      return wasmToNote(note);
-    }
-    if (updates.content !== undefined) {
-      const note = await wasmUpdateNote(id, updates.content);
-      return wasmToNote(note);
-    }
-    return null;
-  } catch {
-    return null;
-  }
+export async function updateMarkdownNote(id: string, content: string): Promise<Note> {
+  const note = await wasmUpdateNote(id, content);
+  const result = wasmToNote(note);
+  await pushNote(id, 'markdown');
+  return result;
+}
+
+export async function updateListNote(id: string, items: string[]): Promise<Note> {
+  const note = await wasmUpdateList(id, items);
+  const result = wasmToNote(note);
+  await pushNote(id, 'list');
+  return result;
 }
 
 export async function deleteNote(id: string): Promise<void> {
