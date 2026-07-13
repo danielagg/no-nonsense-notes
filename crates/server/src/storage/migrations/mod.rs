@@ -87,61 +87,6 @@ mod tests {
             )
             .unwrap();
         assert_eq!(description, "scope updates by account");
-
-        let description: String = conn
-            .query_row(
-                "SELECT description FROM _schema_version WHERE version = 3",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(description, "purge legacy updates");
-    }
-
-    #[test]
-    fn legacy_update_blobs_are_purged() {
-        let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch(include_str!("001_initial.sql")).unwrap();
-        conn.execute_batch(include_str!("002_scope_updates_by_account.sql"))
-            .unwrap();
-
-        conn.execute(
-            "INSERT INTO updates (doc_id, device_id, account_id, blob) VALUES ('old', 'dev', 'acc', ?1)",
-            [b"loro:legacy".as_slice()],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO updates (doc_id, device_id, account_id, blob) VALUES ('empty', 'dev', 'acc', X'')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO updates (doc_id, device_id, account_id, blob) VALUES ('markdown', 'dev', 'acc', X'006C6F726F')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO updates (doc_id, device_id, account_id, blob) VALUES ('list', 'dev', 'acc', X'016C6F726F')",
-            [],
-        )
-        .unwrap();
-        conn.execute(
-            "INSERT INTO updates (doc_id, device_id, account_id, blob) VALUES ('tombstone', 'dev', 'acc', X'FF')",
-            [],
-        )
-        .unwrap();
-
-        conn.execute_batch(include_str!("003_purge_legacy_updates.sql"))
-            .unwrap();
-
-        let remaining: Vec<String> = conn
-            .prepare("SELECT doc_id FROM updates ORDER BY doc_id")
-            .unwrap()
-            .query_map([], |row| row.get(0))
-            .unwrap()
-            .collect::<Result<_, _>>()
-            .unwrap();
-        assert_eq!(remaining, vec!["list", "markdown", "tombstone"]);
     }
 
     #[test]

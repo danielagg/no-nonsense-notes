@@ -4,7 +4,15 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>No Nonsense Notes — Sandbox</title>
+    <meta name="theme-color" content="#f8f8fb" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#0d0e13" media="(prefers-color-scheme: dark)" />
+    <script>
+      const savedTheme = localStorage.getItem('nnn-theme');
+      const useDarkTheme = savedTheme === 'dark' || (!savedTheme && matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.classList.toggle('dark', useDarkTheme);
+      document.documentElement.style.colorScheme = useDarkTheme ? 'dark' : 'light';
+    </script>
+    <title>No Nonsense Notes</title>
   </head>
   <body>
     <div id="root"></div>

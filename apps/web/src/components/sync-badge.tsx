@@ -8,27 +8,29 @@ const STATUS_LABELS: Record<SyncStatus, string> = {
 };
 
 const STATUS_COLORS: Record<SyncStatus, string> = {
-  disconnected: "bg-muted-foreground/30",
-  connecting: "bg-yellow-500/30",
-  connected: "bg-green-500/30",
-  error: "bg-destructive/30",
+  disconnected: "bg-muted-foreground/50",
+  connecting: "bg-amber-500",
+  connected: "bg-emerald-500",
+  error: "bg-destructive",
 };
 
 export function SyncBadge() {
   const { status, lastSeq, pull } = useSync();
 
   return (
-    <div className="fixed bottom-4 right-4 z-50">
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-background/80 backdrop-blur border shadow-md text-xs">
-        <span className={`w-2.5 h-2.5 rounded-full ${STATUS_COLORS[status]}`} />
+    <div className="fixed bottom-4 right-4 z-50 sm:bottom-6 sm:right-6">
+      <div className="flex items-center gap-2 rounded-full border bg-card/90 px-3 py-2 text-[11px] font-medium shadow-lg shadow-foreground/[0.07] backdrop-blur-xl">
+        <span
+          className={`size-1.5 rounded-full ${STATUS_COLORS[status]} ${status === "connecting" ? "animate-pulse" : ""}`}
+        />
         <span className="text-foreground/70">{STATUS_LABELS[status]}</span>
         {lastSeq > 0 && (
           <button
             onClick={() => pull()}
-            className="text-foreground/70 hover:text-foreground underline"
+            className="border-l pl-2 text-muted-foreground transition-colors hover:text-foreground"
             title="Pull latest"
           >
-            seq:{lastSeq}
+            Update {lastSeq}
           </button>
         )}
       </div>
