@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { AuthProvider, useAuth } from '@/lib/auth-context';
+import { AuthProvider } from '@/lib/auth-context';
+import { useAuth } from '@/lib/auth';
 import { AuthPage } from '@/components/auth-page';
 import { NotesList } from '@/components/notes-list';
 import { SyncBadge } from '@/components/sync-badge';

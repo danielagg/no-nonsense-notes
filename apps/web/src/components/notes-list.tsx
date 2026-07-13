@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { getNotes, createNote, deleteNote, type Note } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { useAuth } from "@/lib/auth-context";
+import { useAuth } from "@/lib/auth";
 import { NoteEditor } from "./note-editor";
 import { Brand } from "./brand";
 import { ThemeToggle } from "./theme-toggle";

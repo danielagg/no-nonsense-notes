@@ -1,15 +1,6 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { useState, useCallback, type ReactNode } from 'react';
+import { AuthContext } from './auth';
 import { setActiveAccount } from './wasm';
-
-interface AuthState {
-  token: string | null;
-  accountId: string | null;
-  login: (token: string, accountId: string) => void;
-  logout: () => void;
-  isAuthenticated: boolean;
-}
-
-const AuthContext = createContext<AuthState | null>(null);
 
 const TOKEN_KEY = 'nnn-token';
 const ACCOUNT_KEY = 'nnn-account';
@@ -39,10 +30,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
     </AuthContext.Provider>
   );
-}
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error('useAuth must be used within AuthProvider');
-  return ctx;
 }

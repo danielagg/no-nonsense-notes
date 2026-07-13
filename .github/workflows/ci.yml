@@ -97,6 +97,7 @@ jobs:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VITE_API_URL: ${{ secrets.VITE_API_URL }}
     environment:
       name: production
       url: ${{ steps.deploy.outputs.url }}
@@ -115,6 +116,12 @@ jobs:
         working-directory: apps/web
       - name: Install Vercel CLI
         run: npm install --global vercel@55.0.0
+      - name: Validate production configuration
+        run: |
+          if [[ -z "$VITE_API_URL" ]]; then
+            echo "::error::The VITE_API_URL repository secret is not set"
+            exit 1
+          fi
       - name: Pull Vercel production configuration
         run: vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
       - name: Build for Vercel
