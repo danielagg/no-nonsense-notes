@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { updateMarkdownNote, updateListNote, type Note } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,7 +12,7 @@ import {
   GripVertical,
   ListChecks,
   Plus,
-  Save,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
 import { Brand } from "./brand";
@@ -23,11 +23,36 @@ interface Props {
   onBack: () => void;
 }
 
+interface NoteDraft {
+  title: string;
+  content: string;
+  items: string[];
+}
+
+type SaveStatus = "saved" | "saving" | "error";
+
+const AUTOSAVE_DELAY_MS = 650;
+
 export function NoteEditor({ note, onBack }: Props) {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [items, setItems] = useState(note.items ?? []);
+  const titleRef = useRef(note.title);
+  const contentRef = useRef(note.content);
+  const itemsRef = useRef(note.items ?? []);
+  const initialDraftSignature = draftSignature({
+    title: note.title,
+    content: note.content,
+    items: note.items ?? [],
+  });
+  const latestSignatureRef = useRef(initialDraftSignature);
+  const lastRequestedSignatureRef = useRef(initialDraftSignature);
+  const lastSavedSignatureRef = useRef(initialDraftSignature);
+  const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const saveTimerRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const nextItemId = useRef(note.items?.length ?? 0);
   const [itemIds, setItemIds] = useState(() =>
     (note.items ?? []).map((_, index) => `list-item-${index}`),
@@ -37,50 +62,155 @@ export function NoteEditor({ note, onBack }: Props) {
   const dragPointerIdRef = useRef<number | null>(null);
   const dragHandleRef = useRef<HTMLButtonElement | null>(null);
   const dragTimerRef = useRef<number | null>(null);
+  const dragDidReorderRef = useRef(false);
   const itemRowsRef = useRef<Array<HTMLDivElement | null>>([]);
 
-  const saveMutation = useMutation({
-    mutationFn: () => {
-      const titleOverride = title !== note.title ? title : null;
-      if (note.type === "list") {
-        return updateListNote(note.id, items, titleOverride);
-      }
-      return updateMarkdownNote(note.id, content, titleOverride);
+  const getCurrentDraft = useCallback(
+    (): NoteDraft => ({
+      title: titleRef.current,
+      content: contentRef.current,
+      items: itemsRef.current,
+    }),
+    [],
+  );
+
+  const persistDraft = useCallback(
+    (draft: NoteDraft): Promise<void> => {
+      const signature = draftSignature(draft);
+      latestSignatureRef.current = signature;
+      lastRequestedSignatureRef.current = signature;
+      if (mountedRef.current) setSaveStatus("saving");
+
+      const operation = saveQueueRef.current
+        .catch(() => undefined)
+        .then(async () => {
+          const titleOverride = draft.title !== note.title ? draft.title : null;
+          if (note.type === "list") {
+            await updateListNote(note.id, draft.items, titleOverride);
+          } else {
+            await updateMarkdownNote(note.id, draft.content, titleOverride);
+          }
+          lastSavedSignatureRef.current = signature;
+          await queryClient.invalidateQueries({ queryKey: ["notes"] });
+        });
+
+      saveQueueRef.current = operation;
+      void operation.then(
+        () => {
+          if (
+            mountedRef.current &&
+            latestSignatureRef.current === signature &&
+            lastRequestedSignatureRef.current === signature
+          ) {
+            setSaveStatus("saved");
+          }
+        },
+        () => {
+          if (
+            latestSignatureRef.current === signature &&
+            lastRequestedSignatureRef.current === signature
+          ) {
+            lastRequestedSignatureRef.current = lastSavedSignatureRef.current;
+            if (mountedRef.current) setSaveStatus("error");
+          }
+        },
+      );
+      return operation;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["notes"] });
-      onBack();
+    [note.id, note.title, note.type, queryClient],
+  );
+
+  const clearSaveTimer = useCallback(() => {
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+  }, []);
+
+  const flushSave = useCallback((): Promise<void> => {
+    clearSaveTimer();
+    const draft = getCurrentDraft();
+    const signature = draftSignature(draft);
+    if (signature === lastRequestedSignatureRef.current) return saveQueueRef.current;
+    return persistDraft(draft);
+  }, [clearSaveTimer, getCurrentDraft, persistDraft]);
+
+  useEffect(() => {
+    const draft = getCurrentDraft();
+    const signature = draftSignature(draft);
+    latestSignatureRef.current = signature;
+    if (signature === lastRequestedSignatureRef.current) return;
+
+    if (mountedRef.current) setSaveStatus("saving");
+    clearSaveTimer();
+    saveTimerRef.current = window.setTimeout(() => {
+      saveTimerRef.current = null;
+      void persistDraft(draft).catch(() => undefined);
+    }, AUTOSAVE_DELAY_MS);
+    return clearSaveTimer;
+  }, [title, content, items, clearSaveTimer, getCurrentDraft, persistDraft]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      clearSaveTimer();
+    };
+  }, [clearSaveTimer]);
+
+  const saveItemsImmediately = useCallback(
+    (nextItems: string[]) => {
+      itemsRef.current = nextItems;
+      setItems(nextItems);
+      void persistDraft({ ...getCurrentDraft(), items: nextItems }).catch(() => undefined);
     },
-  });
+    [getCurrentDraft, persistDraft],
+  );
 
   const addItem = useCallback(() => {
-    setItems((prev) => [...prev, ""]);
+    saveItemsImmediately([...itemsRef.current, ""]);
     setItemIds((prev) => [...prev, `list-item-${nextItemId.current++}`]);
-  }, []);
+  }, [saveItemsImmediately]);
 
   const updateItem = useCallback((index: number, value: string) => {
-    setItems((prev) => prev.map((item, i) => (i === index ? value : item)));
+    const nextItems = itemsRef.current.map((item, i) => (i === index ? value : item));
+    itemsRef.current = nextItems;
+    setItems(nextItems);
   }, []);
 
-  const removeItem = useCallback((index: number) => {
-    setItems((prev) => prev.filter((_, i) => i !== index));
-    setItemIds((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  const removeItem = useCallback(
+    (index: number) => {
+      saveItemsImmediately(itemsRef.current.filter((_, i) => i !== index));
+      setItemIds((prev) => prev.filter((_, i) => i !== index));
+    },
+    [saveItemsImmediately],
+  );
 
-  const toggleItem = useCallback((index: number) => {
-    setItems((prev) =>
-      prev.map((item, i) => {
-        if (i !== index) return item;
-        return item.startsWith("[x] ") ? item.slice(4) : `[x] ${item}`;
-      }),
-    );
-  }, []);
+  const toggleItem = useCallback(
+    (index: number) => {
+      saveItemsImmediately(
+        itemsRef.current.map((item, i) => {
+          if (i !== index) return item;
+          return item.startsWith("[x] ") ? item.slice(4) : `[x] ${item}`;
+        }),
+      );
+    },
+    [saveItemsImmediately],
+  );
 
-  const reorderItem = useCallback((fromIndex: number, toIndex: number) => {
-    if (fromIndex === toIndex) return;
-    setItems((prev) => moveArrayItem(prev, fromIndex, toIndex));
-    setItemIds((prev) => moveArrayItem(prev, fromIndex, toIndex));
-  }, []);
+  const reorderItem = useCallback(
+    (fromIndex: number, toIndex: number, saveImmediately = false) => {
+      if (fromIndex === toIndex) return;
+      const nextItems = moveArrayItem(itemsRef.current, fromIndex, toIndex);
+      itemsRef.current = nextItems;
+      setItems(nextItems);
+      setItemIds((prev) => moveArrayItem(prev, fromIndex, toIndex));
+      if (saveImmediately) {
+        void persistDraft({ ...getCurrentDraft(), items: nextItems }).catch(() => undefined);
+      }
+    },
+    [getCurrentDraft, persistDraft],
+  );
 
   const clearDragTimer = useCallback(() => {
     if (dragTimerRef.current !== null) {
@@ -91,6 +221,8 @@ export function NoteEditor({ note, onBack }: Props) {
 
   const finishDrag = useCallback(() => {
     clearDragTimer();
+    const shouldSave = dragDidReorderRef.current;
+    dragDidReorderRef.current = false;
     const handle = dragHandleRef.current;
     const pointerId = dragPointerIdRef.current;
     dragHandleRef.current = null;
@@ -100,7 +232,10 @@ export function NoteEditor({ note, onBack }: Props) {
     if (handle && pointerId !== null && handle.hasPointerCapture(pointerId)) {
       handle.releasePointerCapture(pointerId);
     }
-  }, [clearDragTimer]);
+    if (shouldSave) {
+      void persistDraft(getCurrentDraft()).catch(() => undefined);
+    }
+  }, [clearDragTimer, getCurrentDraft, persistDraft]);
 
   useEffect(() => finishDrag, [finishDrag]);
 
@@ -109,6 +244,7 @@ export function NoteEditor({ note, onBack }: Props) {
       if (!event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return;
 
       clearDragTimer();
+      dragDidReorderRef.current = false;
       dragPointerIdRef.current = event.pointerId;
       dragHandleRef.current = event.currentTarget;
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -153,6 +289,7 @@ export function NoteEditor({ note, onBack }: Props) {
 
       if (closestIndex !== fromIndex) {
         reorderItem(fromIndex, closestIndex);
+        dragDidReorderRef.current = true;
         draggingIndexRef.current = closestIndex;
         setDraggingIndex(closestIndex);
       }
@@ -167,10 +304,19 @@ export function NoteEditor({ note, onBack }: Props) {
       const targetIndex = index + direction;
       if (targetIndex < 0 || targetIndex >= items.length) return;
       event.preventDefault();
-      reorderItem(index, targetIndex);
+      reorderItem(index, targetIndex, true);
     },
     [items.length, reorderItem],
   );
+
+  const handleBack = useCallback(async () => {
+    try {
+      await flushSave();
+      onBack();
+    } catch {
+      // Keep the editor open so the visible retry action can recover the save.
+    }
+  }, [flushSave, onBack]);
 
   return (
     <div className="min-h-svh bg-muted/35">
@@ -179,7 +325,7 @@ export function NoteEditor({ note, onBack }: Props) {
           <div className="flex items-center gap-2 sm:gap-5">
             <Brand compact className="hidden sm:flex" />
             <div className="hidden h-5 w-px bg-border sm:block" />
-            <Button variant="ghost" onClick={onBack}>
+            <Button variant="ghost" onClick={() => void handleBack()}>
               <ArrowLeft />
               Back to notes
             </Button>
@@ -188,15 +334,22 @@ export function NoteEditor({ note, onBack }: Props) {
             <ThemeToggle />
             <Button
               className="min-w-24 shadow-sm shadow-primary/20"
-              onClick={() => saveMutation.mutate()}
-              disabled={saveMutation.isPending}
+              variant={saveStatus === "error" ? "destructive" : "secondary"}
+              onClick={() => void flushSave().catch(() => undefined)}
+              disabled={saveStatus === "saving"}
             >
-              {saveMutation.isPending ? (
+              {saveStatus === "saving" ? (
                 <span className="size-3.5 animate-spin rounded-full border-2 border-current border-r-transparent" />
+              ) : saveStatus === "error" ? (
+                <RefreshCw />
               ) : (
-                <Save />
+                <Check />
               )}
-              {saveMutation.isPending ? "Saving..." : "Save note"}
+              {saveStatus === "saving"
+                ? "Saving..."
+                : saveStatus === "error"
+                  ? "Retry save"
+                  : "Saved"}
             </Button>
           </div>
         </div>
@@ -220,7 +373,10 @@ export function NoteEditor({ note, onBack }: Props) {
         <section className="min-h-[calc(100svh-10rem)] rounded-2xl border bg-card px-5 py-7 shadow-sm sm:px-10 sm:py-10">
           <Input
             value={title}
-            onChange={(e) => setTitle(e.target.value)}
+            onChange={(e) => {
+              titleRef.current = e.target.value;
+              setTitle(e.target.value);
+            }}
             placeholder="Untitled note"
             className="h-auto rounded-none border-0 bg-transparent px-0 py-0 font-heading text-[24px] font-semibold tracking-[-0.04em] shadow-none focus-visible:ring-0 dark:bg-transparent md:text-[32px]"
           />
@@ -229,9 +385,10 @@ export function NoteEditor({ note, onBack }: Props) {
           {note.type === "markdown" ? (
             <Textarea
               value={content}
-              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-                setContent(e.target.value)
-              }
+              onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
+                contentRef.current = e.target.value;
+                setContent(e.target.value);
+              }}
               placeholder="Start writing..."
               className="min-h-[60vh] resize-none rounded-none border-0 bg-transparent px-0 py-0 font-mono text-[15px] leading-7 shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
@@ -311,4 +468,8 @@ function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   const [movedItem] = next.splice(fromIndex, 1);
   next.splice(toIndex, 0, movedItem);
   return next;
+}
+
+function draftSignature(draft: NoteDraft): string {
+  return JSON.stringify([draft.title, draft.content, draft.items]);
 }
