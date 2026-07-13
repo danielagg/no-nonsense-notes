@@ -78,15 +78,23 @@ export async function createNote(type: 'markdown' | 'list'): Promise<Note> {
   return result;
 }
 
-export async function updateMarkdownNote(id: string, content: string): Promise<Note> {
-  const note = await wasmUpdateNote(id, content);
+export async function updateMarkdownNote(
+  id: string,
+  content: string,
+  title: string | null,
+): Promise<Note> {
+  const note = await wasmUpdateNote(id, content, title);
   const result = wasmToNote(note);
   await pushNote(id, 'markdown');
   return result;
 }
 
-export async function updateListNote(id: string, items: string[]): Promise<Note> {
-  const note = await wasmUpdateList(id, items);
+export async function updateListNote(
+  id: string,
+  items: string[],
+  title: string | null,
+): Promise<Note> {
+  const note = await wasmUpdateList(id, items, title);
   const result = wasmToNote(note);
   await pushNote(id, 'list');
   return result;

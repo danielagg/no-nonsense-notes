@@ -1,9 +1,9 @@
 use loro::{ExportMode, LoroDoc, LoroValue, ToJson};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use sha2::{Digest, Sha256};
 
-use crate::note::{Note, NoteId, NoteType};
 use crate::StorageError;
+use crate::note::{Note, NoteId, NoteType};
 
 pub struct NoteRepository<'a> {
     conn: &'a Connection,
@@ -81,7 +81,12 @@ impl<'a> NoteRepository<'a> {
         }
     }
 
-    pub fn update(&self, id: NoteId, new_content: &str) -> Result<Note, StorageError> {
+    pub fn update(
+        &self,
+        id: NoteId,
+        new_content: &str,
+        title_override: Option<&str>,
+    ) -> Result<Note, StorageError> {
         let existing = self.get(id)?;
         if existing.note_type != NoteType::Markdown {
             return Err(StorageError::WrongNoteType {
@@ -105,7 +110,10 @@ impl<'a> NoteRepository<'a> {
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
         let content_hash = Sha256::digest(new_content.as_bytes()).to_vec();
-        let title = Note::derive_title(new_content);
+        let title = match title_override {
+            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+            _ => Note::derive_title(new_content),
+        };
         let now = chrono::Utc::now();
 
         self.conn.execute(
@@ -158,7 +166,12 @@ impl<'a> NoteRepository<'a> {
         self.get(id)
     }
 
-    pub fn list_replace_items(&self, id: NoteId, new_items: &[String]) -> Result<Note, StorageError> {
+    pub fn list_replace_items(
+        &self,
+        id: NoteId,
+        new_items: &[String],
+        title_override: Option<&str>,
+    ) -> Result<Note, StorageError> {
         let existing = self.get(id)?;
         if existing.note_type != NoteType::List {
             return Err(StorageError::WrongNoteType {
@@ -187,7 +200,10 @@ impl<'a> NoteRepository<'a> {
 
         let plaintext = new_items.join("\n");
         let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = list_title(new_items);
+        let title = match title_override {
+            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+            _ => list_title(new_items),
+        };
         let now = chrono::Utc::now();
 
         self.conn.execute(
@@ -254,7 +270,8 @@ impl<'a> NoteRepository<'a> {
         )?;
 
         if let Some(rowid) = self.get_rowid(id)? {
-            self.conn.execute("DELETE FROM notes_fts WHERE rowid = ?1", params![rowid])?;
+            self.conn
+                .execute("DELETE FROM notes_fts WHERE rowid = ?1", params![rowid])?;
         }
 
         Ok(())
@@ -271,7 +288,8 @@ impl<'a> NoteRepository<'a> {
         let mut stmt = self.conn.prepare(&sql)?;
         let folder_str = folder_id.map(|f| f.to_string());
         let rows = stmt.query_map(params![folder_str], row_to_note)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(StorageError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
     }
 
     pub fn search(&self, query: &str) -> Result<Vec<Note>, StorageError> {
@@ -285,7 +303,8 @@ impl<'a> NoteRepository<'a> {
 
         let mut stmt = self.conn.prepare(&sql)?;
         let rows = stmt.query_map(params![query], row_to_note)?;
-        rows.collect::<Result<Vec<_>, _>>().map_err(StorageError::from)
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(StorageError::from)
     }
 
     fn sync_fts(&self, rowid: i64, title: &str, content: &str) -> Result<(), StorageError> {
@@ -332,22 +351,40 @@ fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
     let is_deleted: bool = row.get(9)?;
     let deleted_at: Option<String> = row.get(10)?;
 
-    let note_type: NoteType = note_type_str
-        .parse()
-        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(crate::StorageError::Parse(e))))?;
+    let note_type: NoteType = note_type_str.parse().map_err(|e| {
+        rusqlite::Error::ToSqlConversionFailure(Box::new(crate::StorageError::Parse(e)))
+    })?;
 
     Ok(Note {
-        id: row.get::<_, String>(0)?.parse().map_err(|e: uuid::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        folder_id: folder_id.map(|s| s.parse()).transpose().map_err(|e: uuid::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        id: row
+            .get::<_, String>(0)?
+            .parse()
+            .map_err(|e: uuid::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        folder_id: folder_id
+            .map(|s| s.parse())
+            .transpose()
+            .map_err(|e: uuid::Error| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
         note_type,
         title: row.get(3)?,
         content_plaintext: row.get(4)?,
         content_loro_blob: row.get(5)?,
         content_hash: row.get(6)?,
-        created_at: row.get::<_, String>(7)?.parse().map_err(|e: chrono::ParseError| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
-        updated_at: row.get::<_, String>(8)?.parse().map_err(|e: chrono::ParseError| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        created_at: row
+            .get::<_, String>(7)?
+            .parse()
+            .map_err(|e: chrono::ParseError| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            })?,
+        updated_at: row
+            .get::<_, String>(8)?
+            .parse()
+            .map_err(|e: chrono::ParseError| {
+                rusqlite::Error::ToSqlConversionFailure(Box::new(e))
+            })?,
         is_deleted,
-        deleted_at: deleted_at.map(|s| s.parse()).transpose().map_err(|e: chrono::ParseError| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?,
+        deleted_at: deleted_at.map(|s| s.parse()).transpose().map_err(
+            |e: chrono::ParseError| rusqlite::Error::ToSqlConversionFailure(Box::new(e)),
+        )?,
         sort_order: row.get(11)?,
     })
 }
@@ -397,7 +434,11 @@ mod tests {
         let folder_id = NoteId::now_v7();
         conn.execute(
             "INSERT INTO folders (id, name, sort_order, created_at) VALUES (?1, ?2, 0, ?3)",
-            params![folder_id.to_string(), "Work", chrono::Utc::now().to_rfc3339()],
+            params![
+                folder_id.to_string(),
+                "Work",
+                chrono::Utc::now().to_rfc3339()
+            ],
         )
         .unwrap();
 
@@ -414,7 +455,7 @@ mod tests {
 
         let note = repo.create(NoteType::Markdown, None).unwrap();
         let updated = repo
-            .update(note.id, "# Meeting Notes\n\nLorum ipsum.")
+            .update(note.id, "# Meeting Notes\n\nLorum ipsum.", None)
             .unwrap();
         assert_eq!(updated.title, "Meeting Notes");
     }
@@ -428,7 +469,7 @@ mod tests {
 
         let note = repo.create(NoteType::Markdown, None).unwrap();
         let content = "# Hello\n\nThis is **bold** and *italic*.";
-        let updated = repo.update(note.id, content).unwrap();
+        let updated = repo.update(note.id, content, None).unwrap();
         assert_eq!(updated.content_plaintext, content);
         assert_eq!(updated.title, "Hello");
 
@@ -444,8 +485,49 @@ mod tests {
         let repo = NoteRepository::new(&conn);
 
         let note = repo.create(NoteType::List, None).unwrap();
-        let err = repo.update(note.id, "# Hello").unwrap_err();
+        let err = repo.update(note.id, "# Hello", None).unwrap_err();
         assert!(matches!(err, StorageError::WrongNoteType { .. }));
+    }
+
+    #[test]
+    fn update_with_title_override() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::Markdown, None).unwrap();
+        let updated = repo
+            .update(note.id, "# Hello", Some("Custom Title"))
+            .unwrap();
+        assert_eq!(updated.title, "Custom Title");
+    }
+
+    #[test]
+    fn update_with_empty_title_falls_back_to_derive() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::Markdown, None).unwrap();
+        let updated = repo.update(note.id, "# Hello", Some("  ")).unwrap();
+        assert_eq!(updated.title, "Hello");
+    }
+
+    #[test]
+    fn list_replace_items_with_title_override() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        crate::storage::migrations::run(&conn).unwrap();
+        let repo = NoteRepository::new(&conn);
+
+        let note = repo.create(NoteType::List, None).unwrap();
+        let items = vec!["milk".to_string(), "eggs".to_string()];
+        let updated = repo
+            .list_replace_items(note.id, &items, Some("Shopping"))
+            .unwrap();
+        assert_eq!(updated.title, "Shopping");
     }
 
     #[test]
@@ -490,7 +572,7 @@ mod tests {
         repo.list_add_item(note.id, "eggs").unwrap();
 
         let new_items = vec!["coffee".to_string(), "sugar".to_string()];
-        let note = repo.list_replace_items(note.id, &new_items).unwrap();
+        let note = repo.list_replace_items(note.id, &new_items, None).unwrap();
         assert_eq!(note.content_plaintext, "coffee\nsugar");
         assert_eq!(note.title, "coffee");
 
@@ -506,7 +588,9 @@ mod tests {
         let repo = NoteRepository::new(&conn);
 
         let note = repo.create(NoteType::Markdown, None).unwrap();
-        let err = repo.list_replace_items(note.id, &["x".to_string()]).unwrap_err();
+        let err = repo
+            .list_replace_items(note.id, &["x".to_string()], None)
+            .unwrap_err();
         assert!(matches!(err, StorageError::WrongNoteType { .. }));
     }
 
@@ -521,7 +605,7 @@ mod tests {
         repo.list_add_item(note.id, "milk").unwrap();
         repo.list_add_item(note.id, "eggs").unwrap();
 
-        let note = repo.list_replace_items(note.id, &[]).unwrap();
+        let note = repo.list_replace_items(note.id, &[], None).unwrap();
         assert_eq!(note.content_plaintext, "");
         assert_eq!(note.title, "List");
 
@@ -568,7 +652,7 @@ mod tests {
         repo.list_add_item(n1.id, "eggs").unwrap();
 
         let n2 = repo.create(NoteType::Markdown, None).unwrap();
-        repo.update(n2.id, "Meeting with Alice").unwrap();
+        repo.update(n2.id, "Meeting with Alice", None).unwrap();
 
         let results = repo.search("milk").unwrap();
         assert_eq!(results.len(), 1);
@@ -615,7 +699,11 @@ mod tests {
         let folder_id = NoteId::now_v7();
         conn.execute(
             "INSERT INTO folders (id, name, sort_order, created_at) VALUES (?1, ?2, 0, ?3)",
-            params![folder_id.to_string(), "Work", chrono::Utc::now().to_rfc3339()],
+            params![
+                folder_id.to_string(),
+                "Work",
+                chrono::Utc::now().to_rfc3339()
+            ],
         )
         .unwrap();
 
@@ -638,9 +726,10 @@ mod tests {
         let repo = NoteRepository::new(&conn);
 
         let n1 = repo.create(NoteType::Markdown, None).unwrap();
-        repo.update(n1.id, "Groceries: milk and eggs").unwrap();
+        repo.update(n1.id, "Groceries: milk and eggs", None)
+            .unwrap();
         let n2 = repo.create(NoteType::Markdown, None).unwrap();
-        repo.update(n2.id, "Meeting with Alice").unwrap();
+        repo.update(n2.id, "Meeting with Alice", None).unwrap();
 
         let results = repo.search("Groceries").unwrap();
         assert_eq!(results.len(), 1);
@@ -655,7 +744,7 @@ mod tests {
         let repo = NoteRepository::new(&conn);
 
         let note = repo.create(NoteType::Markdown, None).unwrap();
-        repo.update(note.id, "Important stuff").unwrap();
+        repo.update(note.id, "Important stuff", None).unwrap();
         repo.soft_delete(note.id).unwrap();
 
         let results = repo.search("Important").unwrap();

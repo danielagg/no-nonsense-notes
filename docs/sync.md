@@ -45,6 +45,10 @@ incompatible with a blind relay -- hence this design:
 
 - Authenticated **WebSockets** (instant push to connected devices),
   TLS via Caddy
+- After a push is committed, the server sends an account-scoped
+  `update:<global_seq>` notification to every connected session. The
+  notification is only a wake-up signal; each client still pulls from its
+  own durable cursor, so reconnects and missed notifications are safe.
 - Offline queueing, fast reconnect
 - **Android:** sync-on-open (+ optional periodic WorkManager refresh);
   live WebSocket while the app is open. No FCM -- keeps the app
@@ -118,11 +122,17 @@ The server never inspects this — it stores and relays the blob as-is.
 - `apps/web/src/lib/wasm.ts` -- exposes `encodePushFrame`,
   `decodePullResponse`, `applyRemoteUpdate`, sync cursor, device ID
 - Flow: local mutation → `pushNote` → `encodePushFrame` (Rust) →
-  WebSocket send → server stores → other device pulls →
+  WebSocket send → server stores and notifies the account → other device pulls →
   `decodePullResponse` (Rust) → `applyRemoteUpdate` (Rust) →
   `MemoryStore` merges Loro blob → note list updates
-- Sync cursor persisted in `localStorage` via WASM
-- Device ID generated per browser, persisted in `localStorage`
+- Pushes remain in an account-scoped pending queue until the server's binary
+  acknowledgement arrives. Disconnects reject the in-flight attempt and the
+  reconnect loop retries it.
+- Only a successfully applied pull advances `last_seen_global_seq`. A push
+  acknowledgement never advances the pull cursor, preventing unseen remote
+  updates from being skipped.
+- Note storage, sync cursor, pending pushes, and device ID are scoped by
+  account in `localStorage`.
 - WASM runtime tests: 13 tests including protocol encode/decode and
   `apply_remote_update`
 

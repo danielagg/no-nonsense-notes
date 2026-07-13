@@ -20,23 +20,28 @@ struct StoreData {
 #[wasm_bindgen]
 pub struct WasmStore {
     inner: MemoryStore,
+    storage_namespace: String,
 }
 
 #[wasm_bindgen]
 impl WasmStore {
     #[wasm_bindgen(constructor)]
-    pub fn new() -> Self {
+    pub fn new(account_id: String) -> Self {
+        remove_local_storage_item(STORAGE_KEY);
+        remove_local_storage_item(SYNC_CURSOR_KEY);
+        remove_local_storage_item(DEVICE_ID_KEY);
+
+        let storage_namespace = account_id;
         let mut inner = MemoryStore::new();
-        Self::load_from_storage(&mut inner);
-        Self { inner }
+        Self::load_from_storage(&mut inner, &storage_namespace);
+        Self {
+            inner,
+            storage_namespace,
+        }
     }
 
     #[wasm_bindgen(js_name = createNote)]
-    pub fn create_note(
-        &mut self,
-        note_type: &str,
-        folder_id: Option<String>,
-    ) -> JsResult<JsValue> {
+    pub fn create_note(&mut self, note_type: &str, folder_id: Option<String>) -> JsResult<JsValue> {
         let nt: NoteType = note_type
             .parse()
             .map_err(|e: String| JsValue::from_str(&e))?;
@@ -68,13 +73,18 @@ impl WasmStore {
     }
 
     #[wasm_bindgen(js_name = updateNote)]
-    pub fn update_note(&mut self, id: &str, content: &str) -> JsResult<JsValue> {
+    pub fn update_note(
+        &mut self,
+        id: &str,
+        content: &str,
+        title: Option<String>,
+    ) -> JsResult<JsValue> {
         let id = id
             .parse::<NoteId>()
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
         let note = self
             .inner
-            .update(id, content)
+            .update(id, content, title.as_deref())
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.save_to_storage();
@@ -82,16 +92,21 @@ impl WasmStore {
     }
 
     #[wasm_bindgen(js_name = updateList)]
-    pub fn update_list(&mut self, id: &str, items_json: &str) -> JsResult<JsValue> {
+    pub fn update_list(
+        &mut self,
+        id: &str,
+        items_json: &str,
+        title: Option<String>,
+    ) -> JsResult<JsValue> {
         let id = id
             .parse::<NoteId>()
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
-        let items: Vec<String> = serde_json::from_str(items_json)
-            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        let items: Vec<String> =
+            serde_json::from_str(items_json).map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         let note = self
             .inner
-            .list_replace_items(id, &items)
+            .list_replace_items(id, &items, title.as_deref())
             .map_err(|e| JsValue::from_str(&e.to_string()))?;
 
         self.save_to_storage();
@@ -189,23 +204,24 @@ impl WasmStore {
 
     #[wasm_bindgen(js_name = getSyncCursor)]
     pub fn get_sync_cursor(&self) -> i64 {
-        get_local_storage_item(SYNC_CURSOR_KEY)
+        get_local_storage_item(&self.storage_key(SYNC_CURSOR_KEY))
             .and_then(|s| s.parse::<i64>().ok())
             .unwrap_or(0)
     }
 
     #[wasm_bindgen(js_name = setSyncCursor)]
     pub fn set_sync_cursor(&self, seq: i64) {
-        set_local_storage_item(SYNC_CURSOR_KEY, &seq.to_string());
+        set_local_storage_item(&self.storage_key(SYNC_CURSOR_KEY), &seq.to_string());
     }
 
     #[wasm_bindgen(js_name = getDeviceId)]
     pub fn get_device_id(&self) -> String {
-        if let Some(id) = get_local_storage_item(DEVICE_ID_KEY) {
+        let key = self.storage_key(DEVICE_ID_KEY);
+        if let Some(id) = get_local_storage_item(&key) {
             return id;
         }
         let id = NoteId::now_v7().to_string();
-        set_local_storage_item(DEVICE_ID_KEY, &id);
+        set_local_storage_item(&key, &id);
         id
     }
 
@@ -223,6 +239,10 @@ impl WasmStore {
 }
 
 impl WasmStore {
+    fn storage_key(&self, base: &str) -> String {
+        format!("{base}:{}", self.storage_namespace)
+    }
+
     fn save_to_storage(&self) {
         let notes = self.inner.list(None).unwrap_or_default();
         let data = StoreData {
@@ -232,20 +252,21 @@ impl WasmStore {
         if let Ok(json) = serde_json::to_string(&data) {
             if let Some(window) = web_sys::window() {
                 if let Ok(Some(storage)) = window.local_storage() {
-                    let _ = storage.set_item(STORAGE_KEY, &json);
+                    let _ = storage.set_item(&self.storage_key(STORAGE_KEY), &json);
                 }
             }
         }
     }
 
-    fn load_from_storage(inner: &mut MemoryStore) {
+    fn load_from_storage(inner: &mut MemoryStore, storage_namespace: &str) {
         let Some(window) = web_sys::window() else {
             return;
         };
         let Ok(Some(storage)) = window.local_storage() else {
             return;
         };
-        let Ok(Some(json)) = storage.get_item(STORAGE_KEY) else {
+        let key = format!("{STORAGE_KEY}:{storage_namespace}");
+        let Ok(Some(json)) = storage.get_item(&key) else {
             return;
         };
         let Ok(data) = serde_json::from_str::<StoreData>(&json) else {
@@ -268,6 +289,14 @@ fn set_local_storage_item(key: &str, value: &str) {
     if let Some(window) = web_sys::window() {
         if let Ok(Some(storage)) = window.local_storage() {
             let _ = storage.set_item(key, value);
+        }
+    }
+}
+
+fn remove_local_storage_item(key: &str) {
+    if let Some(window) = web_sys::window() {
+        if let Ok(Some(storage)) = window.local_storage() {
+            let _ = storage.remove_item(key);
         }
     }
 }
@@ -300,8 +329,7 @@ pub fn encode_push_frame(
 
 #[wasm_bindgen(js_name = decodePushResponse)]
 pub fn decode_push_response(data: &[u8]) -> JsResult<i64> {
-    protocol::decode_push_response(data)
-        .map_err(|e| JsValue::from_str(&e))
+    protocol::decode_push_response(data).map_err(|e| JsValue::from_str(&e))
 }
 
 #[wasm_bindgen(js_name = encodePullRequest)]
@@ -311,17 +339,28 @@ pub fn encode_pull_request(last_seq: i64) -> String {
 
 #[wasm_bindgen(js_name = decodePullResponse)]
 pub fn decode_pull_response(text: &str) -> JsResult<JsValue> {
-    let response = protocol::decode_pull_response(text)
-        .map_err(|e| JsValue::from_str(&e))?;
+    let response = protocol::decode_pull_response(text).map_err(|e| JsValue::from_str(&e))?;
 
     let obj = js_sys::Object::new();
-    set_field(&obj, "currentSeq", &JsValue::from_f64(response.current_seq as f64))?;
+    set_field(
+        &obj,
+        "currentSeq",
+        &JsValue::from_f64(response.current_seq as f64),
+    )?;
 
     let entries = js_sys::Array::new();
     for entry in &response.entries {
         let entry_obj = js_sys::Object::new();
-        set_field(&entry_obj, "docId", &JsValue::from_str(&entry.doc_id.to_string()))?;
-        set_field(&entry_obj, "noteType", &JsValue::from_str(entry.note_type.as_str()))?;
+        set_field(
+            &entry_obj,
+            "docId",
+            &JsValue::from_str(&entry.doc_id.to_string()),
+        )?;
+        set_field(
+            &entry_obj,
+            "noteType",
+            &JsValue::from_str(entry.note_type.as_str()),
+        )?;
         set_field(
             &entry_obj,
             "loroBlob",
@@ -351,7 +390,11 @@ fn note_to_js(note: &Note) -> JsResult<JsValue> {
             .map(|f| JsValue::from_str(&f.to_string()))
             .unwrap_or(JsValue::NULL),
     )?;
-    set_field(&obj, "noteType", &JsValue::from_str(note.note_type.as_str()))?;
+    set_field(
+        &obj,
+        "noteType",
+        &JsValue::from_str(note.note_type.as_str()),
+    )?;
     set_field(&obj, "title", &JsValue::from_str(&note.title))?;
     set_field(
         &obj,
@@ -418,7 +461,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn create_markdown_note() {
-        let mut store = WasmStore::new();
+        let mut store = WasmStore::new(NoteId::now_v7().to_string());
         let note = store.create_note("markdown", None).unwrap();
         let id = js_sys::Reflect::get(&note, &JsValue::from_str("id")).unwrap();
         assert!(id.is_string());
@@ -428,14 +471,14 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn create_and_update_markdown() {
-        let mut store = WasmStore::new();
+        let mut store = WasmStore::new(NoteId::now_v7().to_string());
         let note = store.create_note("markdown", None).unwrap();
         let id = js_sys::Reflect::get(&note, &JsValue::from_str("id"))
             .unwrap()
             .as_string()
             .unwrap();
 
-        let updated = store.update_note(&id, "# Hello World").unwrap();
+        let updated = store.update_note(&id, "# Hello World", None).unwrap();
         let title = js_sys::Reflect::get(&updated, &JsValue::from_str("title"))
             .unwrap()
             .as_string()
@@ -451,7 +494,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn create_list_and_replace_items() {
-        let mut store = WasmStore::new();
+        let mut store = WasmStore::new(NoteId::now_v7().to_string());
         let note = store.create_note("list", None).unwrap();
         let id = js_sys::Reflect::get(&note, &JsValue::from_str("id"))
             .unwrap()
@@ -459,7 +502,7 @@ mod tests {
             .unwrap();
 
         let items = r#"["milk","eggs","bread"]"#;
-        let updated = store.update_list(&id, items).unwrap();
+        let updated = store.update_list(&id, items, None).unwrap();
         let content = js_sys::Reflect::get(&updated, &JsValue::from_str("contentPlaintext"))
             .unwrap()
             .as_string()
@@ -475,7 +518,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn soft_delete_removes_from_list() {
-        let mut store = WasmStore::new();
+        let mut store = WasmStore::new(NoteId::now_v7().to_string());
         let note = store.create_note("markdown", None).unwrap();
         let id = js_sys::Reflect::get(&note, &JsValue::from_str("id"))
             .unwrap()
@@ -490,13 +533,15 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn search_notes() {
-        let mut store = WasmStore::new();
+        let mut store = WasmStore::new(NoteId::now_v7().to_string());
         let n1 = store.create_note("markdown", None).unwrap();
         let id1 = js_sys::Reflect::get(&n1, &JsValue::from_str("id"))
             .unwrap()
             .as_string()
             .unwrap();
-        store.update_note(&id1, "Groceries: milk and eggs").unwrap();
+        store
+            .update_note(&id1, "Groceries: milk and eggs", None)
+            .unwrap();
 
         let results = store.search_notes("Groceries").unwrap();
         let arr: js_sys::Array = results.into();
@@ -505,7 +550,7 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn apply_remote_update_creates_note() {
-        let mut store = WasmStore::new();
+        let mut store = WasmStore::new(NoteId::now_v7().to_string());
         let src_note = store.create_note("markdown", None).unwrap();
         let src_id = js_sys::Reflect::get(&src_note, &JsValue::from_str("id"))
             .unwrap()
@@ -526,18 +571,31 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn sync_cursor_round_trip() {
-        let store = WasmStore::new();
+        let store = WasmStore::new(NoteId::now_v7().to_string());
         store.set_sync_cursor(42);
         assert_eq!(store.get_sync_cursor(), 42);
     }
 
     #[wasm_bindgen_test]
     fn device_id_stable() {
-        let store = WasmStore::new();
+        let store = WasmStore::new(NoteId::now_v7().to_string());
         let id1 = store.get_device_id();
         let id2 = store.get_device_id();
         assert_eq!(id1, id2);
         assert!(!id1.is_empty());
+    }
+
+    #[wasm_bindgen_test]
+    fn sync_state_is_scoped_by_account() {
+        let account_a = NoteId::now_v7().to_string();
+        let account_b = NoteId::now_v7().to_string();
+        let store_a = WasmStore::new(account_a);
+        store_a.set_sync_cursor(42);
+        let device_a = store_a.get_device_id();
+
+        let store_b = WasmStore::new(account_b);
+        assert_eq!(store_b.get_sync_cursor(), 0);
+        assert_ne!(store_b.get_device_id(), device_a);
     }
 
     #[wasm_bindgen_test]

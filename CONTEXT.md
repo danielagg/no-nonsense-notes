@@ -84,14 +84,19 @@ _Avoid_: Preferences, config
 
 ## Resolved Decisions
 
-### Title is stored, not derived at read time
+### Title is user-editable with derive fallback
 
-_domain-model.md_ says title is "never stored directly; derived from
-content." The code stores `title` as a column. This is deliberate: FTS5
-indexing and fast listing (without loading Loro blobs) require the title
-to be materialised. The title is computed on write (via `derive_title()`)
-and persisted. It can drift if a Loro merge changes the heading — a known
-trade-off accepted for v1.
+The title is stored as a column (not derived at read time) for FTS5
+indexing and fast listing. On creation, the title is derived from
+content (`derive_title()` for markdown, first item for lists). On
+update, the caller may pass a title override — if provided and
+non-empty, it's used; otherwise the title is re-derived from content.
+
+This means: editing a markdown note's `# heading` line updates the
+title automatically (derive), but the user can also type a custom
+title in the editor. If they do, it sticks across content edits that
+pass `null` for the title override. The editor sends a title override
+only when the user has changed the title field.
 
 ### List notes are a first-class NoteType
 

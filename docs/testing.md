@@ -50,6 +50,9 @@ Runs in CI without real devices:
   Loro convergence
 - Kill-the-server-mid-sync -> client retries -> recovery
 - Fresh client pulls full history -> correct state
+- Two connected sessions for one account receive update notifications and
+  pull committed edits without manual refresh
+- Push acknowledgements do not advance the pull cursor past unseen updates
 
 ## Crypto verification tests
 

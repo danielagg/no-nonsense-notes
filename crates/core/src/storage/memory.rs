@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use loro::{ExportMode, LoroDoc, LoroValue, ToJson};
 use sha2::{Digest, Sha256};
 
-use crate::note::{Note, NoteId, NoteType};
 use crate::StorageError;
+use crate::note::{Note, NoteId, NoteType};
 
 pub struct MemoryStore {
     notes: HashMap<String, Note>,
@@ -94,7 +94,12 @@ impl MemoryStore {
             .ok_or_else(|| StorageError::NotFound { id: id.to_string() })
     }
 
-    pub fn update(&mut self, id: NoteId, new_content: &str) -> Result<Note, StorageError> {
+    pub fn update(
+        &mut self,
+        id: NoteId,
+        new_content: &str,
+        title_override: Option<&str>,
+    ) -> Result<Note, StorageError> {
         let existing = self.get(id)?;
         if existing.note_type != NoteType::Markdown {
             return Err(StorageError::WrongNoteType {
@@ -118,7 +123,10 @@ impl MemoryStore {
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
         let content_hash = Sha256::digest(new_content.as_bytes()).to_vec();
-        let title = Note::derive_title(new_content);
+        let title = match title_override {
+            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+            _ => Note::derive_title(new_content),
+        };
         let now = chrono::Utc::now();
 
         let mut note = existing;
@@ -168,7 +176,12 @@ impl MemoryStore {
         Ok(note)
     }
 
-    pub fn list_replace_items(&mut self, id: NoteId, new_items: &[String]) -> Result<Note, StorageError> {
+    pub fn list_replace_items(
+        &mut self,
+        id: NoteId,
+        new_items: &[String],
+        title_override: Option<&str>,
+    ) -> Result<Note, StorageError> {
         let existing = self.get(id)?;
         if existing.note_type != NoteType::List {
             return Err(StorageError::WrongNoteType {
@@ -197,7 +210,10 @@ impl MemoryStore {
 
         let plaintext = new_items.join("\n");
         let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = list_title(new_items);
+        let title = match title_override {
+            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+            _ => list_title(new_items),
+        };
         let now = chrono::Utc::now();
 
         let mut note = existing;
@@ -426,7 +442,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::Markdown, None).unwrap();
         let content = "# Hello\n\nThis is **bold** and *italic*.";
-        let updated = store.update(note.id, content).unwrap();
+        let updated = store.update(note.id, content, None).unwrap();
         assert_eq!(updated.content_plaintext, content);
         assert_eq!(updated.title, "Hello");
 
@@ -438,8 +454,45 @@ mod tests {
     fn update_rejects_list_type() {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::List, None).unwrap();
-        let err = store.update(note.id, "# Hello").unwrap_err();
+        let err = store.update(note.id, "# Hello", None).unwrap_err();
         assert!(matches!(err, StorageError::WrongNoteType { .. }));
+    }
+
+    #[test]
+    fn update_with_title_override() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::Markdown, None).unwrap();
+        let updated = store
+            .update(note.id, "# Hello", Some("Custom Title"))
+            .unwrap();
+        assert_eq!(updated.title, "Custom Title");
+    }
+
+    #[test]
+    fn update_with_empty_title_falls_back_to_derive() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::Markdown, None).unwrap();
+        let updated = store.update(note.id, "# Hello", Some("  ")).unwrap();
+        assert_eq!(updated.title, "Hello");
+    }
+
+    #[test]
+    fn update_with_none_title_derives() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::Markdown, None).unwrap();
+        let updated = store.update(note.id, "# World", None).unwrap();
+        assert_eq!(updated.title, "World");
+    }
+
+    #[test]
+    fn list_replace_items_with_title_override() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::List, None).unwrap();
+        let items = vec!["milk".to_string(), "eggs".to_string()];
+        let updated = store
+            .list_replace_items(note.id, &items, Some("Shopping List"))
+            .unwrap();
+        assert_eq!(updated.title, "Shopping List");
     }
 
     #[test]
@@ -473,8 +526,12 @@ mod tests {
         store.list_add_item(id, "milk").unwrap();
         store.list_add_item(id, "eggs").unwrap();
 
-        let new_items = vec!["coffee".to_string(), "sugar".to_string(), "flour".to_string()];
-        let note = store.list_replace_items(id, &new_items).unwrap();
+        let new_items = vec![
+            "coffee".to_string(),
+            "sugar".to_string(),
+            "flour".to_string(),
+        ];
+        let note = store.list_replace_items(id, &new_items, None).unwrap();
         assert_eq!(note.content_plaintext, "coffee\nsugar\nflour");
         assert_eq!(note.title, "coffee");
 
@@ -487,7 +544,9 @@ mod tests {
     fn list_replace_items_rejects_markdown() {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::Markdown, None).unwrap();
-        let err = store.list_replace_items(note.id, &["x".to_string()]).unwrap_err();
+        let err = store
+            .list_replace_items(note.id, &["x".to_string()], None)
+            .unwrap_err();
         assert!(matches!(err, StorageError::WrongNoteType { .. }));
     }
 
@@ -498,7 +557,7 @@ mod tests {
         store.list_add_item(note.id, "milk").unwrap();
         store.list_add_item(note.id, "eggs").unwrap();
 
-        let note = store.list_replace_items(note.id, &[]).unwrap();
+        let note = store.list_replace_items(note.id, &[], None).unwrap();
         assert_eq!(note.content_plaintext, "");
         assert_eq!(note.title, "List");
 
@@ -531,9 +590,11 @@ mod tests {
     fn search_notes() {
         let mut store = MemoryStore::new();
         let n1 = store.create(NoteType::Markdown, None).unwrap();
-        store.update(n1.id, "Groceries: milk and eggs").unwrap();
+        store
+            .update(n1.id, "Groceries: milk and eggs", None)
+            .unwrap();
         let n2 = store.create(NoteType::Markdown, None).unwrap();
-        store.update(n2.id, "Meeting with Alice").unwrap();
+        store.update(n2.id, "Meeting with Alice", None).unwrap();
 
         let results = store.search("Groceries").unwrap();
         assert_eq!(results.len(), 1);
@@ -570,7 +631,8 @@ mod tests {
 
         let doc = LoroDoc::new();
         let text = doc.get_text("content");
-        text.insert(0, "# Remote Note\n\nHello from another device").unwrap();
+        text.insert(0, "# Remote Note\n\nHello from another device")
+            .unwrap();
         let blob = doc.export(ExportMode::Snapshot).unwrap();
 
         let remote_id = NoteId::now_v7();
@@ -591,7 +653,7 @@ mod tests {
     fn apply_remote_update_merges_into_existing() {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::Markdown, None).unwrap();
-        store.update(note.id, "# Original\n\nHello").unwrap();
+        store.update(note.id, "# Original\n\nHello", None).unwrap();
 
         let doc = LoroDoc::from_snapshot(&store.get(note.id).unwrap().content_loro_blob).unwrap();
         let text = doc.get_text("content");

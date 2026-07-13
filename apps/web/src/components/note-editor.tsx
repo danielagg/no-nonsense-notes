@@ -13,15 +13,17 @@ interface Props {
 
 export function NoteEditor({ note, onBack }: Props) {
   const queryClient = useQueryClient();
+  const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [items, setItems] = useState(note.items ?? []);
 
   const saveMutation = useMutation({
     mutationFn: () => {
+      const titleOverride = title !== note.title ? title : null;
       if (note.type === 'list') {
-        return updateListNote(note.id, items);
+        return updateListNote(note.id, items, titleOverride);
       }
-      return updateMarkdownNote(note.id, content);
+      return updateMarkdownNote(note.id, content, titleOverride);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notes'] });
@@ -61,7 +63,12 @@ export function NoteEditor({ note, onBack }: Props) {
         </Button>
       </div>
 
-      <h2 className="text-lg font-semibold mb-4 text-muted-foreground">{note.title}</h2>
+      <Input
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        placeholder="Note title..."
+        className="text-lg font-semibold mb-4"
+      />
 
       {note.type === 'markdown' ? (
         <Textarea

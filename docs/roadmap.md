@@ -174,8 +174,6 @@ build target with CI, deployment, and tests.
 - No SQLite, FTS5, folders, tags, or settings
 - `localStorage` ~5MB cap (Loro blobs serialized as JSON)
 - No E2E encryption (crypto modules are stubs)
-- Sync hook connects but does not wire pulled blobs into the store
-  (server-side sync works; client-side integration is Phase 2a)
 
 ### Exit criteria
 

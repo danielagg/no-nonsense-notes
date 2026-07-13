@@ -2,8 +2,8 @@ interface WasmStore {
   free(): void;
   createNote(note_type: string, folder_id?: string | null): any;
   getNote(id: string): any;
-  updateNote(id: string, content: string): any;
-  updateList(id: string, items_json: string): any;
+  updateNote(id: string, content: string, title: string | null): any;
+  updateList(id: string, items_json: string, title: string | null): any;
   listAddItem(id: string, item: string): any;
   listRemoveItem(id: string, item: string): any;
   softDelete(id: string): void;
@@ -27,6 +27,19 @@ interface WasmProtocol {
 }
 
 let storePromise: Promise<{ store: WasmStore; protocol: WasmProtocol }> | null = null;
+let activeAccountId: string | null =
+  typeof localStorage === 'undefined' ? null : localStorage.getItem('nnn-account');
+
+export function setActiveAccount(accountId: string | null): void {
+  if (activeAccountId === accountId) return;
+
+  const previousStore = storePromise;
+  storePromise = null;
+  activeAccountId = accountId;
+  if (previousStore) {
+    void previousStore.then(({ store }) => store.free()).catch(() => {});
+  }
+}
 
 async function getStore(): Promise<WasmStore> {
   return (await getStoreAndProtocol()).store;
@@ -34,11 +47,13 @@ async function getStore(): Promise<WasmStore> {
 
 async function getStoreAndProtocol(): Promise<{ store: WasmStore; protocol: WasmProtocol }> {
   if (!storePromise) {
+    if (!activeAccountId) throw new Error('cannot open the note store without an active account');
     const p = (async () => {
       const wasmUrl = new URL('./wasm-pkg/no_nonsense_notes_wasm_bg.wasm', import.meta.url).href;
       const mod = await import('./wasm-pkg/no_nonsense_notes_wasm.js');
       await mod.default(wasmUrl);
-      const store = new mod.WasmStore();
+      const StoreConstructor = mod.WasmStore as unknown as new (accountId: string) => WasmStore;
+      const store = new StoreConstructor(activeAccountId);
       const protocol = {
         encodePushFrame: mod.encodePushFrame,
         decodePushResponse: mod.decodePushResponse,
@@ -93,15 +108,15 @@ export async function createNote(type: 'markdown' | 'list'): Promise<WasmNote> {
   return raw as WasmNote;
 }
 
-export async function updateNote(id: string, content: string): Promise<WasmNote> {
+export async function updateNote(id: string, content: string, title: string | null): Promise<WasmNote> {
   const store = await getStore();
-  const raw = store.updateNote(id, content);
+  const raw = store.updateNote(id, content, title);
   return raw as WasmNote;
 }
 
-export async function updateList(id: string, items: string[]): Promise<WasmNote> {
+export async function updateList(id: string, items: string[], title: string | null): Promise<WasmNote> {
   const store = await getStore();
-  const raw = store.updateList(id, JSON.stringify(items));
+  const raw = store.updateList(id, JSON.stringify(items), title);
   return raw as WasmNote;
 }
 

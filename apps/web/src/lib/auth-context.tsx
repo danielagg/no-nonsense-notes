@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
+import { setActiveAccount } from './wasm';
 
 interface AuthState {
   token: string | null;
@@ -20,11 +21,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback((t: string, id: string) => {
     localStorage.setItem(TOKEN_KEY, t);
     localStorage.setItem(ACCOUNT_KEY, id);
+    setActiveAccount(id);
     setToken(t);
     setAccountId(id);
   }, []);
 
   const logout = useCallback(() => {
+    setActiveAccount(null);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(ACCOUNT_KEY);
     setToken(null);

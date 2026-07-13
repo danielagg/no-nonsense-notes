@@ -1,15 +1,15 @@
 use axum::{
-    routing::{get, post},
     Router,
+    routing::{get, post},
 };
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowMethods, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
-use utoipa::{OpenApi};
+use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use no_nonsense_notes_server::{auth, storage, sync};
+use no_nonsense_notes_server::{AppState, auth, storage, sync};
 
 #[derive(OpenApi)]
 #[openapi(
@@ -49,7 +49,7 @@ async fn main() {
         .merge(SwaggerUi::new("/swagger-ui").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
-        .with_state(db);
+        .with_state(AppState::new(db));
 
     let port = std::env::var("PORT")
         .or_else(|_| std::env::var("LISTEN_ADDR"))

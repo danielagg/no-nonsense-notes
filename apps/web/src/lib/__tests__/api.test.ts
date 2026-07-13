@@ -34,9 +34,16 @@ import {
   deleteNote,
   searchNotes,
 } from '../api';
+import { setActiveAccount } from '../wasm';
+import { loadPendingPushes, registerPush } from '../sync-manager';
 
 beforeEach(() => {
   vi.clearAllMocks();
+  const accountId = `test-account-${crypto.randomUUID()}`;
+  localStorage.setItem('nnn-account', accountId);
+  setActiveAccount(accountId);
+  registerPush(null);
+  loadPendingPushes(accountId);
 });
 
 describe('api routing', () => {
@@ -48,15 +55,15 @@ describe('api routing', () => {
 
   it('updateMarkdownNote calls wasm updateNote (not updateList)', async () => {
     mockStore.updateNote.mockReturnValue({ id: '1', noteType: 'markdown', title: 'Test', contentPlaintext: 'hello', updatedAt: '2025-01-01T00:00:00Z' });
-    await updateMarkdownNote('1', 'hello');
-    expect(mockStore.updateNote).toHaveBeenCalledWith('1', 'hello');
+    await updateMarkdownNote('1', 'hello', null);
+    expect(mockStore.updateNote).toHaveBeenCalledWith('1', 'hello', null);
     expect(mockStore.updateList).not.toHaveBeenCalled();
   });
 
   it('updateListNote calls wasm updateList (not updateNote)', async () => {
     mockStore.updateList.mockReturnValue({ id: '1', noteType: 'list', title: 'milk', contentPlaintext: 'milk\neggs', updatedAt: '2025-01-01T00:00:00Z' });
-    await updateListNote('1', ['milk', 'eggs']);
-    expect(mockStore.updateList).toHaveBeenCalledWith('1', JSON.stringify(['milk', 'eggs']));
+    await updateListNote('1', ['milk', 'eggs'], null);
+    expect(mockStore.updateList).toHaveBeenCalledWith('1', JSON.stringify(['milk', 'eggs']), null);
     expect(mockStore.updateNote).not.toHaveBeenCalled();
   });
 

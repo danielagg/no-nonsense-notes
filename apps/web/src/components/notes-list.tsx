@@ -12,7 +12,7 @@ export function NotesList() {
   const [selectedNote, setSelectedNote] = useState<Note | null>(null);
 
   const { data: notes = [] } = useQuery({
-    queryKey: ['notes'],
+    queryKey: ['notes', accountId],
     queryFn: getNotes,
   });
 
