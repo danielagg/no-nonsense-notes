@@ -319,8 +319,8 @@ export function NoteEditor({ note, onBack }: Props) {
   }, [flushSave, onBack]);
 
   return (
-    <div className="min-h-svh bg-muted/35">
-      <header className="sticky top-0 z-20 border-b bg-background/85 backdrop-blur-xl">
+    <div className="min-h-[calc(100svh-var(--sync-banner-height))] bg-muted/35">
+      <header className="sticky top-[var(--sync-banner-height)] z-20 border-b bg-background/85 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-8">
           <div className="flex items-center gap-2 sm:gap-5">
             <Brand compact className="hidden sm:flex" />

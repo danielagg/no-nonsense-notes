@@ -49,8 +49,8 @@ export function NotesList() {
   }
 
   return (
-    <div className="min-h-svh bg-background md:grid md:grid-cols-[240px_1fr]">
-      <aside className="hidden h-svh flex-col border-r bg-sidebar px-3 py-4 md:sticky md:top-0 md:flex">
+    <div className="min-h-[calc(100svh-var(--sync-banner-height))] bg-background md:grid md:grid-cols-[240px_1fr]">
+      <aside className="hidden h-[calc(100svh-var(--sync-banner-height))] flex-col border-r bg-sidebar px-3 py-4 md:sticky md:top-[var(--sync-banner-height)] md:flex">
         <Brand className="px-2" />
 
         <nav className="mt-8">
