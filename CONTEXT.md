@@ -11,8 +11,9 @@ end-to-end.
 The central aggregate. A document owned by an account, identified by a
 UUIDv7 `note_id`. Two variants exist: **Markdown** (prose) and **List**
 (checklist/todo). Each variant stores its content in a different Loro CRDT
-container — text for Markdown, list for List. Metadata lives in relational
-tables, not inside Loro.
+container — text for Markdown, list for List. Most metadata lives in relational
+tables. The user-owned title is the exception: it lives in the Loro document's
+`metadata.title` field for CRDT sync and is mirrored in SQLite for listing/FTS.
 
 _Avoid_: Document, entry, page
 
@@ -84,19 +85,18 @@ _Avoid_: Preferences, config
 
 ## Resolved Decisions
 
-### Title is user-editable with derive fallback
+### Title is user-owned metadata
 
-The title is stored as a column (not derived at read time) for FTS5
-indexing and fast listing. On creation, the title is derived from
-content (`derive_title()` for markdown, first item for lists). On
-update, the caller may pass a title override — if provided and
-non-empty, it's used; otherwise the title is re-derived from content.
+The title is never derived from markdown content or list items. New markdown
+and list notes start with neutral `Untitled` and `List` defaults respectively;
+after that, only an explicit title edit changes the title. Adding, editing, or
+removing content must preserve it. An explicitly blank title resets to the
+neutral default for that note type.
 
-This means: editing a markdown note's `# heading` line updates the
-title automatically (derive), but the user can also type a custom
-title in the editor. If they do, it sticks across content edits that
-pass `null` for the title override. The editor sends a title override
-only when the user has changed the title field.
+The title is stored in the Loro document at `metadata.title` so renames sync
+with the note across devices. It is also mirrored in the SQLite `title` column
+for FTS5 indexing and fast listing. The editor sends a title override only when
+the user changed the title field; `null` means preserve the stored title.
 
 ### List notes are a first-class NoteType
 

@@ -16,8 +16,9 @@ The foundation. No network, no crypto code, no UI.
   files, auto-discovered by `migration-build` crate — see
   [tech-stack.md](tech-stack.md))
 - Note CRUD: one Loro doc per note, stored as blobs in SQLite
-- Metadata (folders, tags, note metadata, settings) in dedicated SQLite
-  tables, not inside a Loro doc
+- Metadata (folders, tags, settings, and most note metadata) in dedicated
+  SQLite tables. User-owned titles live inside each Loro document for CRDT
+  sync and are mirrored in SQLite for listing/FTS.
 - FTS5 full-text search over note plaintext
 - Markdown parsing (pulldown-cmark) + syntax spans for editor
   highlighting

@@ -6,10 +6,10 @@ reading them. Encryption details in [security.md](security.md).
 ## CRDT: Loro
 
 - **Loro** (Rust-native CRDT), one document per note
-- Metadata (folders, tags, note metadata, settings) stored in dedicated
-  SQLite tables, not inside a Loro doc -- avoids decryption overhead for
-  folder/tag listing and eliminates a single-writer contention point
-  across devices
+- Metadata (folders, tags, settings, and most note metadata) is stored in
+  dedicated SQLite tables. The user-owned title is stored in the Loro document
+  at `metadata.title` so it uses the same CRDT sync as note content, and is
+  mirrored in SQLite for fast listing and FTS.
 - Metadata changes sync via the same protocol (encrypted version-vector
   over the same WebSocket), not a separate mechanism
 - Chosen over Automerge: faster, and shallow snapshots solve the
@@ -72,7 +72,7 @@ crates/core/src/sync/
 
 crates/wasm/src/lib.rs
   — WASM bindings: encodePushFrame, decodePushResponse,
-    encodePullRequest, decodePullResponse, applyRemoteUpdate,
+    encodePullRequest, decodePullResponse, applyRemoteUpdate, applyRemoteDelete,
     getSyncCursor, setSyncCursor, getDeviceId, exportNoteBlob
 
 apps/web/src/hooks/use-sync.ts
@@ -84,12 +84,15 @@ apps/web/src/hooks/use-sync.ts
 The server treats blobs as opaque bytes. Inside each blob:
 
 ```
-[note_type:1][loro_blob:N]
+[kind:1][payload:N]
 ```
 
-- `note_type`: 0=markdown, 1=list (enables receiver to extract content
+- `kind`: 0=markdown, 1=list, 255=deletion tombstone
+  (the note kinds enable receivers to extract content
   without guessing the Loro container)
-- `loro_blob`: Loro snapshot or update bytes
+- `payload`: Loro snapshot/update bytes for a note; tombstones have no payload.
+  Note documents contain their user-owned title at `metadata.title`; content
+  and list-item edits never derive or replace it.
 
 The server never inspects this — it stores and relays the blob as-is.
 
@@ -106,12 +109,11 @@ The server never inspects this — it stores and relays the blob as-is.
 ### Core protocol (done)
 
 - `crates/core/src/sync/protocol.rs` -- full encode/decode:
-  `encode_push_frame`, `decode_push_response`, `encode_pull_request`,
+  `encode_push_frame`, `encode_delete_frame`, `decode_push_response`, `encode_pull_request`,
   `decode_pull_response`, `encode_sync_blob`, `decode_sync_blob`
 - `crates/core/src/storage/memory.rs` -- `apply_remote_update`: merges
   remote Loro blobs into existing notes or creates new notes from
-  remote
-- Unit tested: 12 protocol tests + 3 `apply_remote_update` tests
+  remote; `apply_remote_delete` idempotently applies tombstones
 
 ### Web sync (done)
 
@@ -119,8 +121,8 @@ The server never inspects this — it stores and relays the blob as-is.
   all protocol encode/decode and merge logic calls into Rust via WASM
 - `apps/web/src/lib/sync-manager.ts` -- bridges mutations to push:
   `api.ts` calls `pushNote` after each local mutation
-- `apps/web/src/lib/wasm.ts` -- exposes `encodePushFrame`,
-  `decodePullResponse`, `applyRemoteUpdate`, sync cursor, device ID
+- `apps/web/src/lib/wasm.ts` -- exposes note and tombstone framing,
+  `decodePullResponse`, remote update/delete application, sync cursor, device ID
 - Flow: local mutation → `pushNote` → `encodePushFrame` (Rust) →
   WebSocket send → server stores and notifies the account → other device pulls →
   `decodePullResponse` (Rust) → `applyRemoteUpdate` (Rust) →
@@ -133,8 +135,10 @@ The server never inspects this — it stores and relays the blob as-is.
   updates from being skipped.
 - Note storage, sync cursor, pending pushes, and device ID are scoped by
   account in `localStorage`.
-- WASM runtime tests: 13 tests including protocol encode/decode and
-  `apply_remote_update`
+- Deletes use the same durable pending queue as edits. A fresh client replays
+  the append-only history in sequence, so the tombstone removes the note after
+  its earlier updates and prevents resurrection on login or refresh.
+- WASM runtime tests cover protocol encode/decode and remote update/delete.
 
 ### Native client (stub)
 
@@ -147,10 +151,11 @@ The server never inspects this — it stores and relays the blob as-is.
 
 ## Open design items
 
-- **Tombstones / deletion under E2E.** A deleted note must eventually
-  vanish from the server's append-only log too. Direction: tombstone
-  note in SQLite metadata + a "purge document" server call once all
-  devices have acked. Design in Phase 2 before the protocol freezes.
+- **Physical tombstone purge under E2E.** Logical deletion now syncs with a
+  durable tombstone. The note's prior updates and tombstone must eventually
+  vanish from the server's append-only log too. Direction: a "purge document"
+  server call once all devices have acked. Design in Phase 2 before the
+  protocol freezes.
 - **Schema & format migrations.** Three things version independently:
   SQLite schema (numbered `.sql`-file migrations auto-discovered by
   `migration-build` — see [tech-stack.md](tech-stack.md)), Loro

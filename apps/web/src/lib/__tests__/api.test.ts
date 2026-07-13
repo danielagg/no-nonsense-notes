@@ -10,6 +10,7 @@ const mockStore = {
   listAddItem: vi.fn(),
   listRemoveItem: vi.fn(),
   applyRemoteUpdate: vi.fn(),
+  applyRemoteDelete: vi.fn(),
   getSyncCursor: vi.fn(() => BigInt(0)),
   setSyncCursor: vi.fn(),
   getDeviceId: vi.fn(() => 'test-device-id'),
@@ -21,6 +22,7 @@ vi.mock('../wasm-pkg/no_nonsense_notes_wasm.js', () => ({
   default: vi.fn(async () => {}),
   WasmStore: vi.fn(() => mockStore),
   encodePushFrame: vi.fn(() => new Uint8Array()),
+  encodeDeleteFrame: vi.fn(() => new Uint8Array()),
   decodePushResponse: vi.fn(() => BigInt(0)),
   encodePullRequest: vi.fn((seq: bigint) => `pull:${seq}`),
   decodePullResponse: vi.fn(() => ({ currentSeq: 0, entries: [] })),
@@ -55,22 +57,25 @@ describe('api routing', () => {
 
   it('updateMarkdownNote calls wasm updateNote (not updateList)', async () => {
     mockStore.updateNote.mockReturnValue({ id: '1', noteType: 'markdown', title: 'Test', contentPlaintext: 'hello', updatedAt: '2025-01-01T00:00:00Z' });
-    await updateMarkdownNote('1', 'hello', null);
-    expect(mockStore.updateNote).toHaveBeenCalledWith('1', 'hello', null);
+    await updateMarkdownNote('1', 'hello', 'Renamed note');
+    expect(mockStore.updateNote).toHaveBeenCalledWith('1', 'hello', 'Renamed note');
     expect(mockStore.updateList).not.toHaveBeenCalled();
   });
 
   it('updateListNote calls wasm updateList (not updateNote)', async () => {
-    mockStore.updateList.mockReturnValue({ id: '1', noteType: 'list', title: 'milk', contentPlaintext: 'milk\neggs', updatedAt: '2025-01-01T00:00:00Z' });
-    await updateListNote('1', ['milk', 'eggs'], null);
-    expect(mockStore.updateList).toHaveBeenCalledWith('1', JSON.stringify(['milk', 'eggs']), null);
+    mockStore.updateList.mockReturnValue({ id: '1', noteType: 'list', title: 'Shopping', contentPlaintext: 'milk\neggs', updatedAt: '2025-01-01T00:00:00Z' });
+    await updateListNote('1', ['milk', 'eggs'], 'Shopping');
+    expect(mockStore.updateList).toHaveBeenCalledWith('1', JSON.stringify(['milk', 'eggs']), 'Shopping');
     expect(mockStore.updateNote).not.toHaveBeenCalled();
   });
 
-  it('deleteNote calls wasm softDelete', async () => {
+  it('deleteNote soft-deletes locally and queues a tombstone', async () => {
     mockStore.softDelete.mockReturnValue(undefined);
+    const push = vi.fn(async () => {});
+    registerPush(push);
     await deleteNote('1');
     expect(mockStore.softDelete).toHaveBeenCalledWith('1');
+    expect(push).toHaveBeenCalledWith('1', 'delete');
   });
 
   it('searchNotes calls wasm searchNotes', async () => {

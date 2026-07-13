@@ -102,6 +102,7 @@ export async function updateListNote(
 
 export async function deleteNote(id: string): Promise<void> {
   await wasmSoftDelete(id);
+  await pushNote(id, 'delete');
 }
 
 export async function searchNotes(query: string): Promise<Note[]> {

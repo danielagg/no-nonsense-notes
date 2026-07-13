@@ -5,6 +5,7 @@ use crate::note::NoteType;
 
 pub const VERSION: u8 = 1;
 pub const MSG_PUSH: u8 = 0x01;
+pub const TOMBSTONE: u8 = 0xFF;
 
 pub const PROTOCOL_VERSION: u8 = 1;
 
@@ -17,8 +18,25 @@ pub struct PushPayload<'a> {
 
 pub struct PullEntry {
     pub doc_id: Uuid,
-    pub note_type: NoteType,
-    pub loro_blob: Vec<u8>,
+    pub payload: PullPayload,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum SyncPayload<'a> {
+    Note {
+        note_type: NoteType,
+        loro_blob: &'a [u8],
+    },
+    Tombstone,
+}
+
+#[derive(Debug, PartialEq)]
+pub enum PullPayload {
+    Note {
+        note_type: NoteType,
+        loro_blob: Vec<u8>,
+    },
+    Tombstone,
 }
 
 pub struct PullResponse {
@@ -33,22 +51,43 @@ pub fn encode_sync_blob(note_type: NoteType, loro_blob: &[u8]) -> Vec<u8> {
     buf
 }
 
-pub fn decode_sync_blob(data: &[u8]) -> Result<(NoteType, &[u8]), String> {
+pub fn encode_tombstone_blob() -> Vec<u8> {
+    vec![TOMBSTONE]
+}
+
+pub fn decode_sync_blob(data: &[u8]) -> Result<SyncPayload<'_>, String> {
     if data.is_empty() {
         return Err("sync blob too short".to_string());
     }
+    if data[0] == TOMBSTONE {
+        if data.len() != 1 {
+            return Err("tombstone blob has trailing bytes".to_string());
+        }
+        return Ok(SyncPayload::Tombstone);
+    }
     let note_type = NoteType::from_byte(data[0])
         .ok_or_else(|| format!("invalid note type byte: {}", data[0]))?;
-    Ok((note_type, &data[1..]))
+    Ok(SyncPayload::Note {
+        note_type,
+        loro_blob: &data[1..],
+    })
 }
 
 pub fn encode_push_frame(payload: &PushPayload) -> Vec<u8> {
     let sync_blob = encode_sync_blob(payload.note_type, payload.loro_blob);
+    encode_raw_push_frame(payload.doc_id, payload.device_id, &sync_blob)
+}
+
+pub fn encode_delete_frame(doc_id: Uuid, device_id: Uuid) -> Vec<u8> {
+    encode_raw_push_frame(doc_id, device_id, &encode_tombstone_blob())
+}
+
+fn encode_raw_push_frame(doc_id: Uuid, device_id: Uuid, sync_blob: &[u8]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(2 + 16 + 16 + 4 + sync_blob.len());
     buf.push(VERSION);
     buf.push(MSG_PUSH);
-    buf.extend_from_slice(payload.doc_id.as_bytes());
-    buf.extend_from_slice(payload.device_id.as_bytes());
+    buf.extend_from_slice(doc_id.as_bytes());
+    buf.extend_from_slice(device_id.as_bytes());
     buf.extend_from_slice(&(sync_blob.len() as u32).to_le_bytes());
     buf.extend_from_slice(&sync_blob);
     buf
@@ -69,9 +108,7 @@ pub fn encode_pull_request(last_seq: i64) -> String {
 pub fn decode_pull_response(text: &str) -> Result<PullResponse, String> {
     let mut lines = text.lines();
     let first = lines.next().ok_or("empty pull response")?;
-    let seq_str = first
-        .strip_prefix("seq:")
-        .ok_or("expected seq: prefix")?;
+    let seq_str = first.strip_prefix("seq:").ok_or("expected seq: prefix")?;
     let current_seq: i64 = seq_str.parse().map_err(|_| "invalid seq number")?;
 
     let mut entries = Vec::new();
@@ -86,15 +123,23 @@ pub fn decode_pull_response(text: &str) -> Result<PullResponse, String> {
         let sync_blob = base64::engine::general_purpose::STANDARD
             .decode(blob_b64)
             .map_err(|e| format!("base64 decode: {e}"))?;
-        let (note_type, loro_blob) = decode_sync_blob(&sync_blob)?;
-        entries.push(PullEntry {
-            doc_id,
-            note_type,
-            loro_blob: loro_blob.to_vec(),
-        });
+        let payload = match decode_sync_blob(&sync_blob)? {
+            SyncPayload::Note {
+                note_type,
+                loro_blob,
+            } => PullPayload::Note {
+                note_type,
+                loro_blob: loro_blob.to_vec(),
+            },
+            SyncPayload::Tombstone => PullPayload::Tombstone,
+        };
+        entries.push(PullEntry { doc_id, payload });
     }
 
-    Ok(PullResponse { current_seq, entries })
+    Ok(PullResponse {
+        current_seq,
+        entries,
+    })
 }
 
 #[cfg(test)]
@@ -106,18 +151,33 @@ mod tests {
     fn encode_decode_sync_blob_round_trip() {
         let blob = vec![1, 2, 3, 4, 5];
         let encoded = encode_sync_blob(NoteType::Markdown, &blob);
-        let (nt, decoded) = decode_sync_blob(&encoded).unwrap();
-        assert_eq!(nt, NoteType::Markdown);
-        assert_eq!(decoded, &blob[..]);
+        assert_eq!(
+            decode_sync_blob(&encoded).unwrap(),
+            SyncPayload::Note {
+                note_type: NoteType::Markdown,
+                loro_blob: &blob,
+            }
+        );
     }
 
     #[test]
     fn encode_decode_sync_blob_list() {
         let blob = vec![9, 9, 9];
         let encoded = encode_sync_blob(NoteType::List, &blob);
-        let (nt, decoded) = decode_sync_blob(&encoded).unwrap();
-        assert_eq!(nt, NoteType::List);
-        assert_eq!(decoded, &blob[..]);
+        assert_eq!(
+            decode_sync_blob(&encoded).unwrap(),
+            SyncPayload::Note {
+                note_type: NoteType::List,
+                loro_blob: &blob,
+            }
+        );
+    }
+
+    #[test]
+    fn encode_decode_tombstone_round_trip() {
+        let encoded = encode_tombstone_blob();
+        assert_eq!(decode_sync_blob(&encoded).unwrap(), SyncPayload::Tombstone);
+        assert!(decode_sync_blob(&[TOMBSTONE, 0]).is_err());
     }
 
     #[test]
@@ -154,6 +214,16 @@ mod tests {
     }
 
     #[test]
+    fn encode_delete_frame_contains_tombstone() {
+        let doc_id = NoteId::now_v7();
+        let device_id = NoteId::now_v7();
+        let frame = encode_delete_frame(doc_id, device_id);
+
+        assert_eq!(u32::from_le_bytes(frame[34..38].try_into().unwrap()), 1);
+        assert_eq!(&frame[38..], &[TOMBSTONE]);
+    }
+
+    #[test]
     fn decode_push_response_round_trip() {
         let seq = 42i64;
         let data = seq.to_le_bytes().to_vec();
@@ -184,8 +254,13 @@ mod tests {
         assert_eq!(decoded.current_seq, 100);
         assert_eq!(decoded.entries.len(), 1);
         assert_eq!(decoded.entries[0].doc_id, doc_id);
-        assert_eq!(decoded.entries[0].note_type, NoteType::List);
-        assert_eq!(decoded.entries[0].loro_blob, loro_blob);
+        assert_eq!(
+            decoded.entries[0].payload,
+            PullPayload::Note {
+                note_type: NoteType::List,
+                loro_blob,
+            }
+        );
     }
 
     #[test]
@@ -207,7 +282,29 @@ mod tests {
 
         let decoded = decode_pull_response(&response).unwrap();
         assert_eq!(decoded.entries.len(), 2);
-        assert_eq!(decoded.entries[0].note_type, NoteType::Markdown);
-        assert_eq!(decoded.entries[1].note_type, NoteType::List);
+        assert!(matches!(
+            decoded.entries[0].payload,
+            PullPayload::Note {
+                note_type: NoteType::Markdown,
+                ..
+            }
+        ));
+        assert!(matches!(
+            decoded.entries[1].payload,
+            PullPayload::Note {
+                note_type: NoteType::List,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn decode_pull_response_tombstone() {
+        let doc_id = NoteId::now_v7();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(encode_tombstone_blob());
+        let response = format!("seq:201\n{doc_id}:{b64}\n");
+
+        let decoded = decode_pull_response(&response).unwrap();
+        assert_eq!(decoded.entries[0].payload, PullPayload::Tombstone);
     }
 }

@@ -26,8 +26,9 @@ Overview document. Deep dives live in their own files:
 - SQLite FTS5 for full-text search
 - One SQLite database per device
 - One Loro document per note (stored as blobs in SQLite)
-- Folders, tags, note metadata, settings in dedicated SQLite tables
-  (not inside a Loro doc -- avoids decryption overhead for listing)
+- Folders, tags, settings, and most note metadata live in dedicated SQLite
+  tables. The user-owned title lives in `metadata.title` inside the Loro doc
+  for CRDT sync and is mirrored in SQLite for listing/FTS.
 - Details: [sync.md](sync.md)
 
 ## Shared Core (Rust)

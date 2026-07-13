@@ -4,11 +4,13 @@ import { useAuth } from '@/lib/auth-context';
 import { registerPush, loadPendingPushes } from '@/lib/sync-manager';
 import {
   applyRemoteUpdate,
+  applyRemoteDelete,
   getSyncCursor,
   setSyncCursor,
   getDeviceId,
   exportNoteBlob,
   encodePushFrame,
+  encodeDeleteFrame,
   decodePushResponse,
   encodePullRequest,
   decodePullResponse,
@@ -70,8 +72,9 @@ export function useSync() {
     }
 
     const deviceId = await getDeviceId();
-    const loroBlob = await exportNoteBlob(docId);
-    const frame = await encodePushFrame(docId, deviceId, noteType, loroBlob);
+    const frame = noteType === 'delete'
+      ? await encodeDeleteFrame(docId, deviceId)
+      : await encodePushFrame(docId, deviceId, noteType, await exportNoteBlob(docId));
 
     await new Promise<void>((resolve, reject) => {
       const acknowledgement = { resolve, reject };
@@ -134,7 +137,13 @@ export function useSync() {
           try {
             const response = await decodePullResponse(event.data);
             for (const entry of response.entries) {
-              await applyRemoteUpdate(entry.docId, entry.noteType, entry.loroBlob);
+              if (entry.deleted) {
+                await applyRemoteDelete(entry.docId);
+              } else if (entry.noteType) {
+                await applyRemoteUpdate(entry.docId, entry.noteType, entry.loroBlob);
+              } else {
+                throw new Error(`note update ${entry.docId} is missing its note type`);
+              }
             }
 
             // Advance only after every update was applied successfully.

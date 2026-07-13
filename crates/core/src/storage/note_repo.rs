@@ -1,9 +1,9 @@
 use loro::{ExportMode, LoroDoc, LoroValue, ToJson};
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use sha2::{Digest, Sha256};
 
-use crate::StorageError;
 use crate::note::{Note, NoteId, NoteType};
+use crate::StorageError;
 
 pub struct NoteRepository<'a> {
     conn: &'a Connection,
@@ -35,16 +35,14 @@ impl<'a> NoteRepository<'a> {
                 doc.get_list("items");
             }
         }
+        let content_plaintext = String::new();
+        let content_hash = Sha256::digest(content_plaintext.as_bytes()).to_vec();
+        let title = Note::default_title(note_type).to_string();
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to initialize note title: {e}")))?;
         let loro_blob = doc
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
-
-        let content_plaintext = String::new();
-        let content_hash = Sha256::digest(content_plaintext.as_bytes()).to_vec();
-        let title = match note_type {
-            NoteType::Markdown => Note::derive_title(&content_plaintext),
-            NoteType::List => "List".to_string(),
-        };
 
         self.conn.execute(
             "INSERT INTO notes (id, folder_id, note_type, title, content_plaintext, content_loro_blob, content_hash, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -106,14 +104,15 @@ impl<'a> NoteRepository<'a> {
         text.update(new_content, Default::default())
             .map_err(|e| StorageError::Loro(format!("failed to update Loro doc: {e}")))?;
 
+        let content_hash = Sha256::digest(new_content.as_bytes()).to_vec();
+        let title = title_override
+            .map(|title| Note::normalize_title(existing.note_type, title))
+            .unwrap_or_else(|| existing.title.clone());
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to update note title: {e}")))?;
         let loro_blob = doc
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
-        let content_hash = Sha256::digest(new_content.as_bytes()).to_vec();
-        let title = match title_override {
-            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-            _ => Note::derive_title(new_content),
-        };
         let now = chrono::Utc::now();
 
         self.conn.execute(
@@ -144,14 +143,15 @@ impl<'a> NoteRepository<'a> {
         list.push(item)
             .map_err(|e| StorageError::Loro(format!("failed to push list item: {e}")))?;
 
-        let loro_blob = doc
-            .export(ExportMode::Snapshot)
-            .map_err(|e| StorageError::Loro(e.to_string()))?;
-
         let items = list_items_from_doc(&doc);
         let plaintext = items.join("\n");
         let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = list_title(&items);
+        let title = existing.title.clone();
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to preserve note title: {e}")))?;
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
         let now = chrono::Utc::now();
 
         self.conn.execute(
@@ -194,16 +194,16 @@ impl<'a> NoteRepository<'a> {
                 .map_err(|e| StorageError::Loro(format!("failed to push list item: {e}")))?;
         }
 
+        let plaintext = new_items.join("\n");
+        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+        let title = title_override
+            .map(|title| Note::normalize_title(existing.note_type, title))
+            .unwrap_or_else(|| existing.title.clone());
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to update note title: {e}")))?;
         let loro_blob = doc
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
-
-        let plaintext = new_items.join("\n");
-        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = match title_override {
-            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-            _ => list_title(new_items),
-        };
         let now = chrono::Utc::now();
 
         self.conn.execute(
@@ -240,14 +240,15 @@ impl<'a> NoteRepository<'a> {
         list.delete(pos, 1)
             .map_err(|e| StorageError::Loro(format!("failed to delete list item: {e}")))?;
 
-        let loro_blob = doc
-            .export(ExportMode::Snapshot)
-            .map_err(|e| StorageError::Loro(e.to_string()))?;
-
         let items = list_items_from_doc(&doc);
         let plaintext = items.join("\n");
         let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = list_title(&items);
+        let title = existing.title.clone();
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to preserve note title: {e}")))?;
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
         let now = chrono::Utc::now();
 
         self.conn.execute(
@@ -339,10 +340,6 @@ fn list_items_from_doc(doc: &LoroDoc) -> Vec<String> {
             other => other.to_json_value().to_string(),
         })
         .collect()
-}
-
-fn list_title(items: &[String]) -> String {
-    items.first().cloned().unwrap_or_else(|| "List".to_string())
 }
 
 fn row_to_note(row: &rusqlite::Row<'_>) -> rusqlite::Result<Note> {
@@ -447,7 +444,7 @@ mod tests {
     }
 
     #[test]
-    fn derive_title_from_content() {
+    fn content_does_not_derive_title() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         crate::storage::migrations::run(&conn).unwrap();
@@ -457,7 +454,7 @@ mod tests {
         let updated = repo
             .update(note.id, "# Meeting Notes\n\nLorum ipsum.", None)
             .unwrap();
-        assert_eq!(updated.title, "Meeting Notes");
+        assert_eq!(updated.title, "Untitled");
     }
 
     #[test]
@@ -471,7 +468,7 @@ mod tests {
         let content = "# Hello\n\nThis is **bold** and *italic*.";
         let updated = repo.update(note.id, content, None).unwrap();
         assert_eq!(updated.content_plaintext, content);
-        assert_eq!(updated.title, "Hello");
+        assert_eq!(updated.title, "Untitled");
 
         let doc = LoroDoc::from_snapshot(&updated.content_loro_blob).unwrap();
         assert_eq!(doc.get_text("content").to_string(), content);
@@ -501,10 +498,15 @@ mod tests {
             .update(note.id, "# Hello", Some("Custom Title"))
             .unwrap();
         assert_eq!(updated.title, "Custom Title");
+
+        let updated = repo.update(note.id, "# Different heading", None).unwrap();
+        assert_eq!(updated.title, "Custom Title");
+        let doc = LoroDoc::from_snapshot(&updated.content_loro_blob).unwrap();
+        assert_eq!(Note::title_from_doc(&doc).as_deref(), Some("Custom Title"));
     }
 
     #[test]
-    fn update_with_empty_title_falls_back_to_derive() {
+    fn update_with_empty_title_uses_neutral_default() {
         let conn = Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
         crate::storage::migrations::run(&conn).unwrap();
@@ -512,7 +514,7 @@ mod tests {
 
         let note = repo.create(NoteType::Markdown, None).unwrap();
         let updated = repo.update(note.id, "# Hello", Some("  ")).unwrap();
-        assert_eq!(updated.title, "Hello");
+        assert_eq!(updated.title, "Untitled");
     }
 
     #[test]
@@ -539,6 +541,7 @@ mod tests {
 
         let note = repo.create(NoteType::List, None).unwrap();
         let id = note.id;
+        repo.list_replace_items(id, &[], Some("Shopping")).unwrap();
 
         repo.list_add_item(id, "milk").unwrap();
         repo.list_add_item(id, "eggs").unwrap();
@@ -546,7 +549,7 @@ mod tests {
 
         let note = repo.get(id).unwrap();
         assert_eq!(note.content_plaintext, "milk\neggs\nbread");
-        assert_eq!(note.title, "milk");
+        assert_eq!(note.title, "Shopping");
 
         let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
         let list = doc.get_list("items");
@@ -574,7 +577,7 @@ mod tests {
         let new_items = vec!["coffee".to_string(), "sugar".to_string()];
         let note = repo.list_replace_items(note.id, &new_items, None).unwrap();
         assert_eq!(note.content_plaintext, "coffee\nsugar");
-        assert_eq!(note.title, "coffee");
+        assert_eq!(note.title, "List");
 
         let results = repo.search("coffee").unwrap();
         assert_eq!(results.len(), 1);

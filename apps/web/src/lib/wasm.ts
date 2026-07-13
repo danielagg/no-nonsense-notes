@@ -10,6 +10,7 @@ interface WasmStore {
   listNotes(folder_id?: string | null): any;
   searchNotes(query: string): any;
   applyRemoteUpdate(note_id: string, note_type: string, update_blob: Uint8Array): any;
+  applyRemoteDelete(note_id: string): void;
   getSyncCursor(): bigint;
   setSyncCursor(seq: bigint): void;
   getDeviceId(): string;
@@ -18,11 +19,17 @@ interface WasmStore {
 
 interface WasmProtocol {
   encodePushFrame(doc_id: string, device_id: string, note_type: string, loro_blob: Uint8Array): Uint8Array;
+  encodeDeleteFrame(doc_id: string, device_id: string): Uint8Array;
   decodePushResponse(data: Uint8Array): bigint;
   encodePullRequest(last_seq: bigint): string;
   decodePullResponse(text: string): {
     currentSeq: number;
-    entries: Array<{ docId: string; noteType: string; loroBlob: Uint8Array }>;
+    entries: Array<{
+      docId: string;
+      deleted: boolean;
+      noteType: string | null;
+      loroBlob: Uint8Array;
+    }>;
   };
 }
 
@@ -56,6 +63,7 @@ async function getStoreAndProtocol(): Promise<{ store: WasmStore; protocol: Wasm
       const store = new StoreConstructor(activeAccountId);
       const protocol = {
         encodePushFrame: mod.encodePushFrame,
+        encodeDeleteFrame: mod.encodeDeleteFrame,
         decodePushResponse: mod.decodePushResponse,
         encodePullRequest: mod.encodePullRequest,
         decodePullResponse: mod.decodePullResponse,
@@ -87,7 +95,8 @@ export interface WasmNote {
 
 export interface PullResponseEntry {
   docId: string;
-  noteType: string;
+  deleted: boolean;
+  noteType: string | null;
   loroBlob: Uint8Array;
 }
 
@@ -153,6 +162,11 @@ export async function applyRemoteUpdate(
   return raw as WasmNote;
 }
 
+export async function applyRemoteDelete(noteId: string): Promise<void> {
+  const store = await getStore();
+  store.applyRemoteDelete(noteId);
+}
+
 export async function getSyncCursor(): Promise<number> {
   const store = await getStore();
   return Number(store.getSyncCursor());
@@ -181,6 +195,14 @@ export async function encodePushFrame(
 ): Promise<Uint8Array> {
   const { protocol } = await getStoreAndProtocol();
   return protocol.encodePushFrame(docId, deviceId, noteType, loroBlob);
+}
+
+export async function encodeDeleteFrame(
+  docId: string,
+  deviceId: string,
+): Promise<Uint8Array> {
+  const { protocol } = await getStoreAndProtocol();
+  return protocol.encodeDeleteFrame(docId, deviceId);
 }
 
 export async function decodePushResponse(data: Uint8Array): Promise<number> {

@@ -202,6 +202,16 @@ impl WasmStore {
         note_to_js(&note)
     }
 
+    #[wasm_bindgen(js_name = applyRemoteDelete)]
+    pub fn apply_remote_delete(&mut self, note_id: &str) -> JsResult<()> {
+        let id = note_id
+            .parse::<NoteId>()
+            .map_err(|e| JsValue::from_str(&e.to_string()))?;
+        self.inner.apply_remote_delete(id);
+        self.save_to_storage();
+        Ok(())
+    }
+
     #[wasm_bindgen(js_name = getSyncCursor)]
     pub fn get_sync_cursor(&self) -> i64 {
         get_local_storage_item(&self.storage_key(SYNC_CURSOR_KEY))
@@ -327,6 +337,17 @@ pub fn encode_push_frame(
     Ok(protocol::encode_push_frame(&payload))
 }
 
+#[wasm_bindgen(js_name = encodeDeleteFrame)]
+pub fn encode_delete_frame(doc_id: &str, device_id: &str) -> JsResult<Vec<u8>> {
+    let doc_id = doc_id
+        .parse::<NoteId>()
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    let device_id = device_id
+        .parse::<NoteId>()
+        .map_err(|e| JsValue::from_str(&e.to_string()))?;
+    Ok(protocol::encode_delete_frame(doc_id, device_id))
+}
+
 #[wasm_bindgen(js_name = decodePushResponse)]
 pub fn decode_push_response(data: &[u8]) -> JsResult<i64> {
     protocol::decode_push_response(data).map_err(|e| JsValue::from_str(&e))
@@ -356,16 +377,33 @@ pub fn decode_pull_response(text: &str) -> JsResult<JsValue> {
             "docId",
             &JsValue::from_str(&entry.doc_id.to_string()),
         )?;
-        set_field(
-            &entry_obj,
-            "noteType",
-            &JsValue::from_str(entry.note_type.as_str()),
-        )?;
-        set_field(
-            &entry_obj,
-            "loroBlob",
-            &js_sys::Uint8Array::from(&entry.loro_blob[..]),
-        )?;
+        match &entry.payload {
+            protocol::PullPayload::Note {
+                note_type,
+                loro_blob,
+            } => {
+                set_field(&entry_obj, "deleted", &JsValue::FALSE)?;
+                set_field(
+                    &entry_obj,
+                    "noteType",
+                    &JsValue::from_str(note_type.as_str()),
+                )?;
+                set_field(
+                    &entry_obj,
+                    "loroBlob",
+                    &js_sys::Uint8Array::from(&loro_blob[..]),
+                )?;
+            }
+            protocol::PullPayload::Tombstone => {
+                set_field(&entry_obj, "deleted", &JsValue::TRUE)?;
+                set_field(&entry_obj, "noteType", &JsValue::NULL)?;
+                set_field(
+                    &entry_obj,
+                    "loroBlob",
+                    &js_sys::Uint8Array::new_with_length(0),
+                )?;
+            }
+        }
         entries.push(&entry_obj);
     }
     set_field(&obj, "entries", &entries)?;
@@ -478,18 +516,27 @@ mod tests {
             .as_string()
             .unwrap();
 
-        let updated = store.update_note(&id, "# Hello World", None).unwrap();
+        let updated = store
+            .update_note(&id, "# Hello World", Some("My title".to_string()))
+            .unwrap();
         let title = js_sys::Reflect::get(&updated, &JsValue::from_str("title"))
             .unwrap()
             .as_string()
             .unwrap();
-        assert_eq!(title, "Hello World");
+        assert_eq!(title, "My title");
 
         let content = js_sys::Reflect::get(&updated, &JsValue::from_str("contentPlaintext"))
             .unwrap()
             .as_string()
             .unwrap();
         assert_eq!(content, "# Hello World");
+
+        let updated = store.update_note(&id, "# New heading", None).unwrap();
+        let title = js_sys::Reflect::get(&updated, &JsValue::from_str("title"))
+            .unwrap()
+            .as_string()
+            .unwrap();
+        assert_eq!(title, "My title");
     }
 
     #[wasm_bindgen_test]
@@ -502,7 +549,9 @@ mod tests {
             .unwrap();
 
         let items = r#"["milk","eggs","bread"]"#;
-        let updated = store.update_list(&id, items, None).unwrap();
+        let updated = store
+            .update_list(&id, items, Some("Shopping".to_string()))
+            .unwrap();
         let content = js_sys::Reflect::get(&updated, &JsValue::from_str("contentPlaintext"))
             .unwrap()
             .as_string()
@@ -513,7 +562,16 @@ mod tests {
             .unwrap()
             .as_string()
             .unwrap();
-        assert_eq!(title, "milk");
+        assert_eq!(title, "Shopping");
+
+        let updated = store
+            .update_list(&id, r#"["milk","eggs","bread","tea"]"#, None)
+            .unwrap();
+        let title = js_sys::Reflect::get(&updated, &JsValue::from_str("title"))
+            .unwrap()
+            .as_string()
+            .unwrap();
+        assert_eq!(title, "Shopping");
     }
 
     #[wasm_bindgen_test]
@@ -556,6 +614,9 @@ mod tests {
             .unwrap()
             .as_string()
             .unwrap();
+        store
+            .update_note(&src_id, "Remote content", Some("Synced title".to_string()))
+            .unwrap();
         let blob = store.export_note_blob(&src_id).unwrap();
 
         let remote_id = NoteId::now_v7().to_string();
@@ -567,6 +628,29 @@ mod tests {
             .as_string()
             .unwrap();
         assert_eq!(id, remote_id);
+        let title = js_sys::Reflect::get(&note, &JsValue::from_str("title"))
+            .unwrap()
+            .as_string()
+            .unwrap();
+        assert_eq!(title, "Synced title");
+    }
+
+    #[wasm_bindgen_test]
+    fn apply_remote_delete_hides_note_and_ignores_missing_note() {
+        let mut store = WasmStore::new(NoteId::now_v7().to_string());
+        let note = store.create_note("markdown", None).unwrap();
+        let id = js_sys::Reflect::get(&note, &JsValue::from_str("id"))
+            .unwrap()
+            .as_string()
+            .unwrap();
+
+        store.apply_remote_delete(&id).unwrap();
+        store
+            .apply_remote_delete(&NoteId::now_v7().to_string())
+            .unwrap();
+
+        let notes: js_sys::Array = store.list_notes(None).unwrap().into();
+        assert_eq!(notes.length(), 0);
     }
 
     #[wasm_bindgen_test]
@@ -608,6 +692,37 @@ mod tests {
         assert!(frame.len() > 38);
         assert_eq!(frame[0], 1);
         assert_eq!(frame[1], 1);
+    }
+
+    #[wasm_bindgen_test]
+    fn encode_delete_frame_produces_tombstone_frame() {
+        let doc_id = NoteId::now_v7().to_string();
+        let device_id = NoteId::now_v7().to_string();
+
+        let frame = encode_delete_frame(&doc_id, &device_id).unwrap();
+        assert_eq!(u32::from_le_bytes(frame[34..38].try_into().unwrap()), 1);
+        assert_eq!(frame[38], protocol::TOMBSTONE);
+    }
+
+    #[wasm_bindgen_test]
+    fn decode_pull_response_exposes_tombstone() {
+        let doc_id = NoteId::now_v7();
+        let response_text = format!("seq:51\n{doc_id}:/w==\n");
+        let response = decode_pull_response(&response_text).unwrap();
+        let entries: js_sys::Array = js_sys::Reflect::get(&response, &JsValue::from_str("entries"))
+            .unwrap()
+            .into();
+        let entry = entries.get(0);
+
+        assert_eq!(
+            js_sys::Reflect::get(&entry, &JsValue::from_str("deleted"))
+                .unwrap()
+                .as_bool(),
+            Some(true)
+        );
+        assert!(js_sys::Reflect::get(&entry, &JsValue::from_str("noteType"))
+            .unwrap()
+            .is_null());
     }
 
     #[wasm_bindgen_test]

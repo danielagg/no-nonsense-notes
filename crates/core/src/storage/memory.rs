@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use loro::{ExportMode, LoroDoc, LoroValue, ToJson};
 use sha2::{Digest, Sha256};
 
-use crate::StorageError;
 use crate::note::{Note, NoteId, NoteType};
+use crate::StorageError;
 
 pub struct MemoryStore {
     notes: HashMap<String, Note>,
@@ -54,16 +54,14 @@ impl MemoryStore {
                 doc.get_list("items");
             }
         }
+        let content_plaintext = String::new();
+        let content_hash = Sha256::digest(content_plaintext.as_bytes()).to_vec();
+        let title = Note::default_title(note_type).to_string();
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to initialize note title: {e}")))?;
         let loro_blob = doc
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
-
-        let content_plaintext = String::new();
-        let content_hash = Sha256::digest(content_plaintext.as_bytes()).to_vec();
-        let title = match note_type {
-            NoteType::Markdown => Note::derive_title(&content_plaintext),
-            NoteType::List => "List".to_string(),
-        };
 
         let sort_order = self.next_sort_order;
         self.next_sort_order += 1;
@@ -119,14 +117,15 @@ impl MemoryStore {
         text.update(new_content, Default::default())
             .map_err(|e| StorageError::Loro(format!("failed to update Loro doc: {e}")))?;
 
+        let content_hash = Sha256::digest(new_content.as_bytes()).to_vec();
+        let title = title_override
+            .map(|title| Note::normalize_title(existing.note_type, title))
+            .unwrap_or_else(|| existing.title.clone());
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to update note title: {e}")))?;
         let loro_blob = doc
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
-        let content_hash = Sha256::digest(new_content.as_bytes()).to_vec();
-        let title = match title_override {
-            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-            _ => Note::derive_title(new_content),
-        };
         let now = chrono::Utc::now();
 
         let mut note = existing;
@@ -155,14 +154,15 @@ impl MemoryStore {
         list.push(item)
             .map_err(|e| StorageError::Loro(format!("failed to push list item: {e}")))?;
 
-        let loro_blob = doc
-            .export(ExportMode::Snapshot)
-            .map_err(|e| StorageError::Loro(e.to_string()))?;
-
         let items = list_items_from_doc(&doc);
         let plaintext = items.join("\n");
         let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = list_title(&items);
+        let title = existing.title.clone();
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to preserve note title: {e}")))?;
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
         let now = chrono::Utc::now();
 
         let mut note = existing;
@@ -204,16 +204,16 @@ impl MemoryStore {
                 .map_err(|e| StorageError::Loro(format!("failed to push list item: {e}")))?;
         }
 
+        let plaintext = new_items.join("\n");
+        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
+        let title = title_override
+            .map(|title| Note::normalize_title(existing.note_type, title))
+            .unwrap_or_else(|| existing.title.clone());
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to update note title: {e}")))?;
         let loro_blob = doc
             .export(ExportMode::Snapshot)
             .map_err(|e| StorageError::Loro(e.to_string()))?;
-
-        let plaintext = new_items.join("\n");
-        let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = match title_override {
-            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-            _ => list_title(new_items),
-        };
         let now = chrono::Utc::now();
 
         let mut note = existing;
@@ -249,14 +249,15 @@ impl MemoryStore {
         list.delete(pos, 1)
             .map_err(|e| StorageError::Loro(format!("failed to delete list item: {e}")))?;
 
-        let loro_blob = doc
-            .export(ExportMode::Snapshot)
-            .map_err(|e| StorageError::Loro(e.to_string()))?;
-
         let items = list_items_from_doc(&doc);
         let plaintext = items.join("\n");
         let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
-        let title = list_title(&items);
+        let title = existing.title.clone();
+        Note::set_title_in_doc(&doc, &title)
+            .map_err(|e| StorageError::Loro(format!("failed to preserve note title: {e}")))?;
+        let loro_blob = doc
+            .export(ExportMode::Snapshot)
+            .map_err(|e| StorageError::Loro(e.to_string()))?;
         let now = chrono::Utc::now();
 
         let mut note = existing;
@@ -290,7 +291,8 @@ impl MemoryStore {
                 .export(ExportMode::Snapshot)
                 .map_err(|e| StorageError::Loro(e.to_string()))?;
 
-            let (plaintext, title) = extract_content(&doc, note_type);
+            let plaintext = extract_content(&doc, note_type);
+            let title = Note::title_from_doc(&doc).unwrap_or_else(|| existing.title.clone());
             let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
             let now = chrono::Utc::now();
 
@@ -313,7 +315,9 @@ impl MemoryStore {
                 .export(ExportMode::Snapshot)
                 .map_err(|e| StorageError::Loro(e.to_string()))?;
 
-            let (plaintext, title) = extract_content(&doc, note_type);
+            let plaintext = extract_content(&doc, note_type);
+            let title = Note::title_from_doc(&doc)
+                .unwrap_or_else(|| Note::default_title(note_type).to_string());
             let content_hash = Sha256::digest(plaintext.as_bytes()).to_vec();
             let now = chrono::Utc::now();
             let sort_order = self.next_sort_order;
@@ -347,6 +351,20 @@ impl MemoryStore {
         existing.updated_at = now;
         self.notes.insert(id.to_string(), existing);
         Ok(())
+    }
+
+    /// Applies a deletion received from another device. Missing notes are already
+    /// deleted from this store's point of view, so tombstone replay is idempotent.
+    pub fn apply_remote_delete(&mut self, id: NoteId) {
+        if let Some(existing) = self.notes.get_mut(&id.to_string()) {
+            if existing.is_deleted {
+                return;
+            }
+            let now = chrono::Utc::now();
+            existing.is_deleted = true;
+            existing.deleted_at = Some(now);
+            existing.updated_at = now;
+        }
     }
 
     pub fn list(&self, folder_id: Option<NoteId>) -> Result<Vec<Note>, StorageError> {
@@ -389,22 +407,12 @@ fn list_items_from_doc(doc: &LoroDoc) -> Vec<String> {
         .collect()
 }
 
-fn list_title(items: &[String]) -> String {
-    items.first().cloned().unwrap_or_else(|| "List".to_string())
-}
-
-fn extract_content(doc: &LoroDoc, note_type: NoteType) -> (String, String) {
+fn extract_content(doc: &LoroDoc, note_type: NoteType) -> String {
     match note_type {
-        NoteType::Markdown => {
-            let text = doc.get_text("content").to_string();
-            let title = Note::derive_title(&text);
-            (text, title)
-        }
+        NoteType::Markdown => doc.get_text("content").to_string(),
         NoteType::List => {
             let items = list_items_from_doc(doc);
-            let plaintext = items.join("\n");
-            let title = list_title(&items);
-            (plaintext, title)
+            items.join("\n")
         }
     }
 }
@@ -444,7 +452,7 @@ mod tests {
         let content = "# Hello\n\nThis is **bold** and *italic*.";
         let updated = store.update(note.id, content, None).unwrap();
         assert_eq!(updated.content_plaintext, content);
-        assert_eq!(updated.title, "Hello");
+        assert_eq!(updated.title, "Untitled");
 
         let doc = LoroDoc::from_snapshot(&updated.content_loro_blob).unwrap();
         assert_eq!(doc.get_text("content").to_string(), content);
@@ -469,19 +477,22 @@ mod tests {
     }
 
     #[test]
-    fn update_with_empty_title_falls_back_to_derive() {
+    fn update_with_empty_title_uses_neutral_default() {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::Markdown, None).unwrap();
         let updated = store.update(note.id, "# Hello", Some("  ")).unwrap();
-        assert_eq!(updated.title, "Hello");
+        assert_eq!(updated.title, "Untitled");
     }
 
     #[test]
-    fn update_with_none_title_derives() {
+    fn content_update_without_title_preserves_custom_title() {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::Markdown, None).unwrap();
+        store
+            .update(note.id, "# First", Some("User Title"))
+            .unwrap();
         let updated = store.update(note.id, "# World", None).unwrap();
-        assert_eq!(updated.title, "World");
+        assert_eq!(updated.title, "User Title");
     }
 
     #[test]
@@ -500,6 +511,7 @@ mod tests {
         let mut store = MemoryStore::new();
         let note = store.create(NoteType::List, None).unwrap();
         let id = note.id;
+        store.list_replace_items(id, &[], Some("Shopping")).unwrap();
 
         store.list_add_item(id, "milk").unwrap();
         store.list_add_item(id, "eggs").unwrap();
@@ -507,7 +519,7 @@ mod tests {
 
         let note = store.get(id).unwrap();
         assert_eq!(note.content_plaintext, "milk\neggs\nbread");
-        assert_eq!(note.title, "milk");
+        assert_eq!(note.title, "Shopping");
 
         let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
         let list = doc.get_list("items");
@@ -533,7 +545,7 @@ mod tests {
         ];
         let note = store.list_replace_items(id, &new_items, None).unwrap();
         assert_eq!(note.content_plaintext, "coffee\nsugar\nflour");
-        assert_eq!(note.title, "coffee");
+        assert_eq!(note.title, "List");
 
         let doc = LoroDoc::from_snapshot(&note.content_loro_blob).unwrap();
         let list = doc.get_list("items");
@@ -587,6 +599,19 @@ mod tests {
     }
 
     #[test]
+    fn remote_delete_is_idempotent_for_existing_and_missing_notes() {
+        let mut store = MemoryStore::new();
+        let note = store.create(NoteType::Markdown, None).unwrap();
+
+        store.apply_remote_delete(note.id);
+        store.apply_remote_delete(note.id);
+        store.apply_remote_delete(NoteId::now_v7());
+
+        assert!(store.list(None).unwrap().is_empty());
+        assert!(store.get(note.id).unwrap().is_deleted);
+    }
+
+    #[test]
     fn search_notes() {
         let mut store = MemoryStore::new();
         let n1 = store.create(NoteType::Markdown, None).unwrap();
@@ -633,6 +658,7 @@ mod tests {
         let text = doc.get_text("content");
         text.insert(0, "# Remote Note\n\nHello from another device")
             .unwrap();
+        Note::set_title_in_doc(&doc, "Remote Note").unwrap();
         let blob = doc.export(ExportMode::Snapshot).unwrap();
 
         let remote_id = NoteId::now_v7();
@@ -677,6 +703,7 @@ mod tests {
         let list = doc.get_list("items");
         list.push("milk").unwrap();
         list.push("eggs").unwrap();
+        Note::set_title_in_doc(&doc, "Groceries").unwrap();
         let blob = doc.export(ExportMode::Snapshot).unwrap();
 
         let remote_id = NoteId::now_v7();
@@ -686,6 +713,27 @@ mod tests {
 
         assert_eq!(note.note_type, NoteType::List);
         assert_eq!(note.content_plaintext, "milk\neggs");
-        assert_eq!(note.title, "milk");
+        assert_eq!(note.title, "Groceries");
+    }
+
+    #[test]
+    fn title_is_part_of_remote_update_metadata() {
+        let mut source = MemoryStore::new();
+        let note = source.create(NoteType::Markdown, None).unwrap();
+        let renamed = source
+            .update(note.id, "# Heading", Some("User-owned title"))
+            .unwrap();
+
+        let mut destination = MemoryStore::new();
+        let received = destination
+            .apply_remote_update(note.id, NoteType::Markdown, &renamed.content_loro_blob)
+            .unwrap();
+        assert_eq!(received.title, "User-owned title");
+
+        let edited = source.update(note.id, "# Different heading", None).unwrap();
+        let received = destination
+            .apply_remote_update(note.id, NoteType::Markdown, &edited.content_loro_blob)
+            .unwrap();
+        assert_eq!(received.title, "User-owned title");
     }
 }

@@ -72,7 +72,8 @@ WASM module and verify the TypeScript wrapper logic:
   `wasmUpdateList` (and vice versa for list notes)
 - `wasmToNote` mapping: markdown notes get `items=undefined`, list
   notes get `items` array from `contentPlaintext.split('\n')`
-- Auth, search, delete call the right WASM methods
+- Auth and search call the right WASM methods; delete soft-deletes locally and
+  queues a sync tombstone
 
 Run: `npm run test` (or `npm run test:watch` for watch mode) in
 `apps/web/`.
@@ -87,6 +88,10 @@ browser. These catch platform-specific issues that `cargo check` and
   `wasmbind` feature -- the create-note test catches this
 - `getrandom` needs `wasm_js` backend -- UUIDv7 generation exercises this
 - Note CRUD round-trips through the `WasmStore` + `MemoryStore` stack
+- User-owned titles survive content/list edits and remote CRDT replay; list
+  items never become note titles
+- Tombstone frames decode as deletes, and remote deletion is idempotent for
+  both existing and already-absent notes
 
 Run: `wasm-pack test --headless --chrome --cargo-arg=--no-default-features
 crates/wasm` (requires Chrome installed).

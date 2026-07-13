@@ -125,6 +125,11 @@ mod tests {
             [],
         )
         .unwrap();
+        conn.execute(
+            "INSERT INTO updates (doc_id, device_id, account_id, blob) VALUES ('tombstone', 'dev', 'acc', X'FF')",
+            [],
+        )
+        .unwrap();
 
         conn.execute_batch(include_str!("003_purge_legacy_updates.sql"))
             .unwrap();
@@ -136,7 +141,7 @@ mod tests {
             .unwrap()
             .collect::<Result<_, _>>()
             .unwrap();
-        assert_eq!(remaining, vec!["list", "markdown"]);
+        assert_eq!(remaining, vec!["list", "markdown", "tombstone"]);
     }
 
     #[test]

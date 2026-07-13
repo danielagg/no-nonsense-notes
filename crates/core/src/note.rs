@@ -1,3 +1,4 @@
+use loro::{LoroDoc, LoroValue};
 use serde::{Deserialize, Serialize};
 
 pub type NoteId = uuid::Uuid;
@@ -67,15 +68,31 @@ pub struct Note {
 }
 
 impl Note {
-    pub fn derive_title(content: &str) -> String {
-        for line in content.lines() {
-            if let Some(stripped) = line.strip_prefix("# ") {
-                let t = stripped.trim();
-                if !t.is_empty() {
-                    return t.to_string();
-                }
-            }
+    pub fn default_title(note_type: NoteType) -> &'static str {
+        match note_type {
+            NoteType::Markdown => "Untitled",
+            NoteType::List => "List",
         }
-        "Untitled".to_string()
+    }
+
+    pub fn normalize_title(note_type: NoteType, title: &str) -> String {
+        let title = title.trim();
+        if title.is_empty() {
+            Self::default_title(note_type).to_string()
+        } else {
+            title.to_string()
+        }
+    }
+
+    pub fn set_title_in_doc(doc: &LoroDoc, title: &str) -> loro::LoroResult<()> {
+        doc.get_map("metadata").insert("title", title)
+    }
+
+    pub fn title_from_doc(doc: &LoroDoc) -> Option<String> {
+        let value = doc.try_get_map("metadata")?.get("title")?.get_deep_value();
+        match value {
+            LoroValue::String(title) => Some(title.to_string()),
+            _ => None,
+        }
     }
 }

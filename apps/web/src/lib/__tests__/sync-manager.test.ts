@@ -32,13 +32,13 @@ describe('sync manager', () => {
     expect(localStorage.getItem(key!)).toBe('[]');
   });
 
-  it('retains offline pushes for the next connection', async () => {
+  it('retains an offline tombstone for the next connection', async () => {
     registerPush(null);
-    await pushNote('note-offline', 'list');
+    await pushNote('note-offline', 'delete');
 
     const push = vi.fn(async () => {});
     registerPush(push);
-    await vi.waitFor(() => expect(push).toHaveBeenCalledWith('note-offline', 'list'));
+    await vi.waitFor(() => expect(push).toHaveBeenCalledWith('note-offline', 'delete'));
   });
 
   it('does not load another account pending queue', async () => {
