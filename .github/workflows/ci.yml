@@ -78,8 +78,10 @@ jobs:
           path: apps/web/dist/
 
   android-build:
-    name: Android build
+    name: Android production APK
     runs-on: ubuntu-latest
+    env:
+      ANDROID_PRODUCTION_API_URL: https://no-nonsense-notes.onrender.com
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-java@v5
@@ -92,12 +94,68 @@ jobs:
         with:
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
       - uses: Swatinem/rust-cache@v2
-      - run: ./gradlew assembleDebug
+
+      - name: Configure release signing
+        env:
+          KEYSTORE_BASE64: ${{ secrets.NNN_ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.NNN_ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.NNN_ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.NNN_ANDROID_KEY_PASSWORD }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" != "push" || "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "Pull request build: release signing is intentionally disabled."
+            exit 0
+          fi
+
+          configured=0
+          for value in "$KEYSTORE_BASE64" "$KEYSTORE_PASSWORD" "$KEY_ALIAS" "$KEY_PASSWORD"; do
+            [[ -n "$value" ]] && configured=$((configured + 1))
+          done
+
+          if [[ "$configured" == 0 ]]; then
+            echo "::warning::Android signing secrets are not configured; the production APK will be unsigned."
+            exit 0
+          fi
+          if [[ "$configured" != 4 ]]; then
+            echo "::error::Android release signing is partially configured. Set all four NNN_ANDROID_* secrets."
+            exit 1
+          fi
+
+          keystore="$RUNNER_TEMP/no-nonsense-notes-release.jks"
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+          echo "NNN_ANDROID_KEYSTORE=$keystore" >> "$GITHUB_ENV"
+          echo "NNN_ANDROID_KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" >> "$GITHUB_ENV"
+          echo "NNN_ANDROID_KEY_ALIAS=$KEY_ALIAS" >> "$GITHUB_ENV"
+          echo "NNN_ANDROID_KEY_PASSWORD=$KEY_PASSWORD" >> "$GITHUB_ENV"
+
+      - name: Build production release APK
+        run: ./gradlew assembleRelease -PreleaseApiUrl="$ANDROID_PRODUCTION_API_URL"
         working-directory: apps/android
+
+      - name: Verify production API URL
+        run: |
+          build_config="app/build/generated/source/buildConfig/release/app/nononsense/notes/BuildConfig.java"
+          grep -F "API_URL = \"$ANDROID_PRODUCTION_API_URL\"" "$build_config"
+        working-directory: apps/android
+
+      - name: Prepare production artifact
+        run: |
+          mkdir -p app/build/distributions
+          if [[ -f app/build/outputs/apk/release/app-release.apk ]]; then
+            output="app/build/distributions/no-nonsense-notes-production-signed.apk"
+            cp app/build/outputs/apk/release/app-release.apk "$output"
+          else
+            output="app/build/distributions/no-nonsense-notes-production-unsigned.apk"
+            cp app/build/outputs/apk/release/app-release-unsigned.apk "$output"
+          fi
+          sha256sum "$output" > "$output.sha256"
+        working-directory: apps/android
+
       - uses: actions/upload-artifact@v7
         with:
-          name: android-debug-apk
-          path: apps/android/app/build/outputs/apk/debug/app-debug.apk
+          name: android-production-apk
+          path: apps/android/app/build/distributions/
+          if-no-files-found: error
 
   deploy-render:
     name: Deploy backend to Render
