@@ -1,2 +1,3 @@
-pub mod protocol;
+#[cfg(feature = "sqlite")]
 pub mod client;
+pub mod protocol;

@@ -1,0 +1,4 @@
+[bindings.kotlin]
+package_name = "app.nononsense.notes.core"
+cdylib_name = "no_nonsense_notes_android"
+

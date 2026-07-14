@@ -3,7 +3,7 @@ set -euo pipefail
 
 # Start both the Rust server and the web dev server from the project root.
 # Builds WASM first (required — wasm-pkg/ is gitignored).
-# Usage: ./scripts/dev.sh
+# Usage: ./scripts/web.sh
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 

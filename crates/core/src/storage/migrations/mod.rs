@@ -49,7 +49,17 @@ mod tests {
 
         let mut tables = tables;
         tables.sort();
-        assert_eq!(tables, vec!["folders", "note_tags", "notes", "settings", "tags"]);
+        assert_eq!(
+            tables,
+            vec![
+                "folders",
+                "note_tags",
+                "notes",
+                "pending_sync",
+                "settings",
+                "tags"
+            ]
+        );
     }
 
     #[test]

@@ -5,6 +5,8 @@ members = [
     "crates/server",
     "crates/migration-build",
     "crates/wasm",
+    "crates/android-ffi",
+    "crates/uniffi-bindgen",
 ]
 
 [workspace.package]

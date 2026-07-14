@@ -105,6 +105,11 @@ describe("NotesList live updates", () => {
     );
     act(() => openButton!.click());
 
+    const editButton = [...container.querySelectorAll<HTMLButtonElement>(
+      '[role="tab"]',
+    )].find((button) => button.textContent === "edit");
+    act(() => editButton!.click());
+
     await act(async () => {
       queryClient.setQueryData<Note[]>(["notes", "account-1"], [
         {

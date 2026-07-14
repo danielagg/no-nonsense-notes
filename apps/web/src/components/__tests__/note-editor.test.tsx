@@ -87,6 +87,7 @@ describe("NoteEditor autosave", () => {
 
   it("debounces text edits", async () => {
     const container = renderEditor(markdownNote);
+    switchToEditMode(container);
     const textarea = container.querySelector<HTMLTextAreaElement>(
       'textarea[placeholder="Start writing..."]',
     );
@@ -109,6 +110,7 @@ describe("NoteEditor autosave", () => {
 
   it("saves periodically during continuous typing", async () => {
     const container = renderEditor(markdownNote);
+    switchToEditMode(container);
     const textarea = container.querySelector<HTMLTextAreaElement>(
       'textarea[placeholder="Start writing..."]',
     );
@@ -165,6 +167,7 @@ describe("NoteEditor autosave", () => {
     );
     const onBack = vi.fn();
     const container = renderEditor(markdownNote, onBack);
+    switchToEditMode(container);
     const textarea = container.querySelector<HTMLTextAreaElement>(
       'textarea[placeholder="Start writing..."]',
     );
@@ -198,6 +201,7 @@ describe("NoteEditor autosave", () => {
       )
       .mockResolvedValue(markdownNote);
     const container = renderEditor(markdownNote);
+    switchToEditMode(container);
     const textarea = container.querySelector<HTMLTextAreaElement>(
       'textarea[placeholder="Start writing..."]',
     );
@@ -230,6 +234,7 @@ describe("NoteEditor autosave", () => {
   it("shows remote markdown changes while the editor is idle", () => {
     const onBack = vi.fn();
     const container = renderEditor(markdownNote, onBack);
+    switchToEditMode(container);
     const remoteNote: Note = {
       ...markdownNote,
       title: "Changed elsewhere",
@@ -280,6 +285,7 @@ describe("NoteEditor autosave", () => {
   it("does not overwrite a local draft with an incoming update", () => {
     const onBack = vi.fn();
     const container = renderEditor(markdownNote, onBack);
+    switchToEditMode(container);
     const textarea = container.querySelector<HTMLTextAreaElement>(
       'textarea[placeholder="Start writing..."]',
     );
@@ -313,9 +319,17 @@ function rerenderEditor(note: Note, onBack: () => void) {
   act(() => root.render(<NoteEditor note={note} onBack={onBack} />));
 }
 
+function switchToEditMode(container: HTMLDivElement) {
+  const editButton = [...container.querySelectorAll<HTMLButtonElement>(
+    '[role="tab"]',
+  )].find((button) => button.textContent === "edit");
+  act(() => editButton!.click());
+}
+
 function changeValue(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
+  const tag = (element as Element).tagName;
   const prototype =
-    element instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+    tag === "INPUT" ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
   const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   setter?.call(element, value);
   element.dispatchEvent(new Event("input", { bubbles: true }));

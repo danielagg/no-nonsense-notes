@@ -140,14 +140,20 @@ The server never inspects this — it stores and relays the blob as-is.
   its earlier updates and prevents resurrection on login or refresh.
 - WASM runtime tests cover protocol encode/decode and remote update/delete.
 
-### Native client (stub)
+### Native client (Android foundation implemented)
 
-- `crates/core/src/sync/client.rs` -- 2-line comment, no implementation
-- The WebSocket thread, offline queue, reconnect logic, and
-  `SyncDelegate` callback interface described in
-  [tech-stack.md](tech-stack.md) are all design-only
-- Will use the same `protocol.rs` for encode/decode — only transport
-  differs (tungstenite vs web-sys::WebSocket)
+- `crates/core/src/sync/client.rs` owns a blocking `tungstenite` connection on
+  a dedicated thread, reconnects with bounded backoff, and uses the same
+  `protocol.rs` framing and pull decoder as web.
+- `crates/core/src/storage/native.rs` combines SQLite-backed note operations
+  with a durable, generation-checked sync outbox, device ID, and pull cursor.
+- `crates/android-ffi/` exposes the store and sync session through UniFFI.
+  `SyncDelegate` callbacks notify Kotlin about connection state and remote note
+  changes; Kotlin dispatches those notifications to the main coroutine scope.
+- `apps/android/` builds the Rust library for arm64, armv7, and x86_64 and
+  packages the generated Kotlin bindings and native libraries into the APK.
+- Periodic WorkManager refresh remains future work; the current client keeps a
+  live socket and syncs while the application process is running.
 
 ## Open design items
 

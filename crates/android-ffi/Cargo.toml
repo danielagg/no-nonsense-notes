@@ -1,0 +1,14 @@
+[package]
+name = "no-nonsense-notes-android"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+no-nonsense-notes-core = { path = "../core" }
+thiserror = "2"
+uniffi = "0.31"
+uuid = "1"
+

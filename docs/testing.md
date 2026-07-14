@@ -108,6 +108,7 @@ Linux runner:
   - npm run lint (apps/web)
   - npm run test (apps/web, vitest)
   - npm run build (apps/web, tsc + vite)
+  - ./gradlew assembleDebug (apps/android; builds UniFFI + three Rust ABIs)
 
 Deploy (only if tests pass):
   - Trigger Vercel deploy via webhook
