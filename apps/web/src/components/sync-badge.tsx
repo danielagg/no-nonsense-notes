@@ -21,11 +21,11 @@ const STATUS_CONTENT: Record<
 
 const STATUS_STYLES: Record<Exclude<SyncStatus, "connected">, string> = {
   disconnected:
-    "border-amber-500/25 bg-amber-50 text-amber-950 dark:bg-amber-950 dark:text-amber-100",
+    "border-amber-500/35 bg-amber-50 text-amber-950 dark:bg-[#171406] dark:text-amber-200",
   connecting:
-    "border-sky-500/25 bg-sky-50 text-sky-950 dark:bg-sky-950 dark:text-sky-100",
+    "border-primary/35 bg-emerald-50 text-emerald-950 dark:bg-[#07170d] dark:text-primary",
   error:
-    "border-destructive/25 bg-red-50 text-red-950 dark:bg-red-950 dark:text-red-100",
+    "border-destructive/35 bg-red-50 text-red-950 dark:bg-[#1b0808] dark:text-red-200",
 };
 
 export function SyncStatusBar({ status }: { status: SyncStatus }) {
@@ -43,7 +43,7 @@ export function SyncStatusBar({ status }: { status: SyncStatus }) {
 
   return (
     <div
-      className={`fixed inset-x-0 top-0 z-50 flex h-10 items-center justify-center border-b px-4 text-xs shadow-sm ${STATUS_STYLES[status]}`}
+      className={`fixed inset-x-0 top-0 z-50 flex h-10 items-center justify-center border-b px-4 font-heading text-[10px] uppercase tracking-[0.08em] shadow-sm ${STATUS_STYLES[status]}`}
       role="status"
       aria-live="polite"
       data-sync-status={status}

@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
 import { updateMarkdownNote, updateListNote, type Note } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,14 +31,17 @@ interface NoteDraft {
 }
 
 type SaveStatus = "saved" | "saving" | "error";
+type MarkdownMode = "edit" | "preview";
 
 const AUTOSAVE_DELAY_MS = 650;
+const AUTOSAVE_MAX_WAIT_MS = 1_200;
 
 export function NoteEditor({ note, onBack }: Props) {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [items, setItems] = useState(note.items ?? []);
+  const [markdownMode, setMarkdownMode] = useState<MarkdownMode>("preview");
   const titleRef = useRef(note.title);
   const contentRef = useRef(note.content);
   const itemsRef = useRef(note.items ?? []);
@@ -51,7 +55,10 @@ export function NoteEditor({ note, onBack }: Props) {
   const lastSavedSignatureRef = useRef(initialDraftSignature);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const saveTimerRef = useRef<number | null>(null);
+  const saveMaxWaitTimerRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
+  const hasPendingLocalChangesRef = useRef(false);
+  const pendingRemoteNoteRef = useRef<Note | null>(null);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const nextItemId = useRef(note.items?.length ?? 0);
   const [itemIds, setItemIds] = useState(() =>
@@ -74,11 +81,63 @@ export function NoteEditor({ note, onBack }: Props) {
     [],
   );
 
+  const applyIncomingNote = useCallback((incomingNote: Note) => {
+    const incomingDraft = noteToDraft(incomingNote);
+    const signature = draftSignature(incomingDraft);
+    const currentSignature = draftSignature({
+      title: titleRef.current,
+      content: contentRef.current,
+      items: itemsRef.current,
+    });
+
+    if (saveTimerRef.current !== null) {
+      window.clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    if (saveMaxWaitTimerRef.current !== null) {
+      window.clearTimeout(saveMaxWaitTimerRef.current);
+      saveMaxWaitTimerRef.current = null;
+    }
+    latestSignatureRef.current = signature;
+    lastRequestedSignatureRef.current = signature;
+    lastSavedSignatureRef.current = signature;
+    hasPendingLocalChangesRef.current = false;
+
+    if (signature !== currentSignature) {
+      titleRef.current = incomingDraft.title;
+      contentRef.current = incomingDraft.content;
+      itemsRef.current = incomingDraft.items;
+      setTitle(incomingDraft.title);
+      setContent(incomingDraft.content);
+      setItems(incomingDraft.items);
+      setItemIds(
+        incomingDraft.items.map(() => `list-item-${nextItemId.current++}`),
+      );
+    }
+    if (mountedRef.current) setSaveStatus("saved");
+  }, []);
+
+  const applyPendingRemoteNote = useCallback(() => {
+    const pendingNote = pendingRemoteNoteRef.current;
+    if (!pendingNote || hasPendingLocalChangesRef.current) return;
+    pendingRemoteNoteRef.current = null;
+    applyIncomingNote(pendingNote);
+  }, [applyIncomingNote]);
+
   const persistDraft = useCallback(
     (draft: NoteDraft): Promise<void> => {
+      if (saveTimerRef.current !== null) {
+        window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+      }
+      if (saveMaxWaitTimerRef.current !== null) {
+        window.clearTimeout(saveMaxWaitTimerRef.current);
+        saveMaxWaitTimerRef.current = null;
+      }
       const signature = draftSignature(draft);
       latestSignatureRef.current = signature;
       lastRequestedSignatureRef.current = signature;
+      hasPendingLocalChangesRef.current = true;
       if (mountedRef.current) setSaveStatus("saving");
 
       const operation = saveQueueRef.current
@@ -102,7 +161,9 @@ export function NoteEditor({ note, onBack }: Props) {
             latestSignatureRef.current === signature &&
             lastRequestedSignatureRef.current === signature
           ) {
+            hasPendingLocalChangesRef.current = false;
             setSaveStatus("saved");
+            applyPendingRemoteNote();
           }
         },
         () => {
@@ -117,7 +178,7 @@ export function NoteEditor({ note, onBack }: Props) {
       );
       return operation;
     },
-    [note.id, note.title, note.type, queryClient],
+    [applyPendingRemoteNote, note.id, note.title, note.type, queryClient],
   );
 
   const clearSaveTimer = useCallback(() => {
@@ -127,42 +188,88 @@ export function NoteEditor({ note, onBack }: Props) {
     }
   }, []);
 
+  const clearSaveMaxWaitTimer = useCallback(() => {
+    if (saveMaxWaitTimerRef.current !== null) {
+      window.clearTimeout(saveMaxWaitTimerRef.current);
+      saveMaxWaitTimerRef.current = null;
+    }
+  }, []);
+
   const flushSave = useCallback((): Promise<void> => {
     clearSaveTimer();
+    clearSaveMaxWaitTimer();
     const draft = getCurrentDraft();
     const signature = draftSignature(draft);
-    if (signature === lastRequestedSignatureRef.current) return saveQueueRef.current;
+    if (signature === lastRequestedSignatureRef.current)
+      return saveQueueRef.current;
     return persistDraft(draft);
-  }, [clearSaveTimer, getCurrentDraft, persistDraft]);
+  }, [clearSaveMaxWaitTimer, clearSaveTimer, getCurrentDraft, persistDraft]);
 
   useEffect(() => {
     const draft = getCurrentDraft();
     const signature = draftSignature(draft);
     latestSignatureRef.current = signature;
-    if (signature === lastRequestedSignatureRef.current) return;
+    if (signature === lastRequestedSignatureRef.current) {
+      if (signature === lastSavedSignatureRef.current) {
+        clearSaveMaxWaitTimer();
+        hasPendingLocalChangesRef.current = false;
+        if (mountedRef.current) setSaveStatus("saved");
+        applyPendingRemoteNote();
+      }
+      return;
+    }
 
+    hasPendingLocalChangesRef.current = true;
     if (mountedRef.current) setSaveStatus("saving");
     clearSaveTimer();
     saveTimerRef.current = window.setTimeout(() => {
       saveTimerRef.current = null;
-      void persistDraft(draft).catch(() => undefined);
+      void persistDraft(getCurrentDraft()).catch(() => undefined);
     }, AUTOSAVE_DELAY_MS);
+    if (saveMaxWaitTimerRef.current === null) {
+      saveMaxWaitTimerRef.current = window.setTimeout(() => {
+        saveMaxWaitTimerRef.current = null;
+        clearSaveTimer();
+        void persistDraft(getCurrentDraft()).catch(() => undefined);
+      }, AUTOSAVE_MAX_WAIT_MS);
+    }
     return clearSaveTimer;
-  }, [title, content, items, clearSaveTimer, getCurrentDraft, persistDraft]);
+  }, [
+    title,
+    content,
+    items,
+    applyPendingRemoteNote,
+    clearSaveMaxWaitTimer,
+    clearSaveTimer,
+    getCurrentDraft,
+    persistDraft,
+  ]);
+
+  useEffect(() => {
+    if (hasPendingLocalChangesRef.current) {
+      pendingRemoteNoteRef.current = note;
+      return;
+    }
+    pendingRemoteNoteRef.current = null;
+    applyIncomingNote(note);
+  }, [note, applyIncomingNote]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       clearSaveTimer();
+      clearSaveMaxWaitTimer();
     };
-  }, [clearSaveTimer]);
+  }, [clearSaveMaxWaitTimer, clearSaveTimer]);
 
   const saveItemsImmediately = useCallback(
     (nextItems: string[]) => {
       itemsRef.current = nextItems;
       setItems(nextItems);
-      void persistDraft({ ...getCurrentDraft(), items: nextItems }).catch(() => undefined);
+      void persistDraft({ ...getCurrentDraft(), items: nextItems }).catch(
+        () => undefined,
+      );
     },
     [getCurrentDraft, persistDraft],
   );
@@ -173,7 +280,9 @@ export function NoteEditor({ note, onBack }: Props) {
   }, [saveItemsImmediately]);
 
   const updateItem = useCallback((index: number, value: string) => {
-    const nextItems = itemsRef.current.map((item, i) => (i === index ? value : item));
+    const nextItems = itemsRef.current.map((item, i) =>
+      i === index ? value : item,
+    );
     itemsRef.current = nextItems;
     setItems(nextItems);
   }, []);
@@ -206,7 +315,9 @@ export function NoteEditor({ note, onBack }: Props) {
       setItems(nextItems);
       setItemIds((prev) => moveArrayItem(prev, fromIndex, toIndex));
       if (saveImmediately) {
-        void persistDraft({ ...getCurrentDraft(), items: nextItems }).catch(() => undefined);
+        void persistDraft({ ...getCurrentDraft(), items: nextItems }).catch(
+          () => undefined,
+        );
       }
     },
     [getCurrentDraft, persistDraft],
@@ -241,7 +352,11 @@ export function NoteEditor({ note, onBack }: Props) {
 
   const handleDragPointerDown = useCallback(
     (event: React.PointerEvent<HTMLButtonElement>, index: number) => {
-      if (!event.isPrimary || (event.pointerType === "mouse" && event.button !== 0)) return;
+      if (
+        !event.isPrimary ||
+        (event.pointerType === "mouse" && event.button !== 0)
+      )
+        return;
 
       clearDragTimer();
       dragDidReorderRef.current = false;
@@ -273,7 +388,8 @@ export function NoteEditor({ note, onBack }: Props) {
       event.preventDefault();
       const edgeSize = 72;
       if (event.clientY < edgeSize) window.scrollBy({ top: -12 });
-      if (event.clientY > window.innerHeight - edgeSize) window.scrollBy({ top: 12 });
+      if (event.clientY > window.innerHeight - edgeSize)
+        window.scrollBy({ top: 12 });
 
       let closestIndex = fromIndex;
       let closestDistance = Number.POSITIVE_INFINITY;
@@ -299,7 +415,8 @@ export function NoteEditor({ note, onBack }: Props) {
 
   const handleReorderKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
-      const direction = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+      const direction =
+        event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
       if (direction === 0) return;
       const targetIndex = index + direction;
       if (targetIndex < 0 || targetIndex >= items.length) return;
@@ -319,8 +436,8 @@ export function NoteEditor({ note, onBack }: Props) {
   }, [flushSave, onBack]);
 
   return (
-    <div className="min-h-[calc(100svh-var(--sync-banner-height))] bg-muted/35">
-      <header className="sticky top-[var(--sync-banner-height)] z-20 border-b bg-background/85 backdrop-blur-xl">
+    <div className="terminal-grid min-h-[calc(100svh-var(--sync-banner-height))]">
+      <header className="sticky top-[var(--sync-banner-height)] z-20 border-b border-primary/15 bg-background/88 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-8">
           <div className="flex items-center gap-2 sm:gap-5">
             <Brand compact className="hidden sm:flex" />
@@ -330,47 +447,77 @@ export function NoteEditor({ note, onBack }: Props) {
               Back to notes
             </Button>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-4">
             <ThemeToggle />
-            <Button
-              className="min-w-24 shadow-sm shadow-primary/20"
-              variant={saveStatus === "error" ? "destructive" : "secondary"}
+            <div
+              className="min-w-24 flex items-center gap-2 text-xs opacity-50 font-heading uppercase"
               onClick={() => void flushSave().catch(() => undefined)}
-              disabled={saveStatus === "saving"}
             >
               {saveStatus === "saving" ? (
                 <span className="size-3.5 animate-spin rounded-full border-2 border-current border-r-transparent" />
               ) : saveStatus === "error" ? (
-                <RefreshCw />
+                <RefreshCw className="size-3" />
               ) : (
-                <Check />
+                <Check className="size-3" />
               )}
-              {saveStatus === "saving"
-                ? "Saving..."
-                : saveStatus === "error"
-                  ? "Retry save"
-                  : "Saved"}
-            </Button>
+              {saveStatus === "saving" ? (
+                <p>Saving...</p>
+              ) : saveStatus === "error" ? (
+                <p>Retry save</p>
+              ) : (
+                <p>Saved</p>
+              )}
+            </div>
           </div>
         </div>
       </header>
 
       <main className="mx-auto w-full max-w-4xl px-4 py-6 sm:px-8 sm:py-10">
-        <div className="mb-4 flex items-center justify-between px-1 text-xs text-muted-foreground">
-          <div className="flex items-center gap-2">
+        <div className="mb-4 flex items-center justify-between px-1 font-heading text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+          <div className="flex items-center gap-2 text-primary/80">
             {note.type === "markdown" ? (
               <FileText className="size-3.5" />
             ) : (
               <ListChecks className="size-3.5" />
             )}
             <span>
-              {note.type === "markdown" ? "Markdown note" : "Checklist"}
+              {note.type === "markdown"
+                ? "Markdown // buffer"
+                : "List // buffer"}
             </span>
           </div>
-          <span>Edited {new Date(note.updated_at).toLocaleString()}</span>
+          <div className="flex items-center gap-3">
+            {note.type === "markdown" && (
+              <div
+                role="tablist"
+                aria-label="Markdown display mode"
+                className="flex rounded-sm border border-primary/15 bg-background/55 p-0.5"
+              >
+                {(["edit", "preview"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    role="tab"
+                    aria-selected={markdownMode === mode}
+                    className={`rounded-sm px-2 py-1 font-heading text-[9px] font-semibold uppercase tracking-[0.1em] transition-colors ${
+                      markdownMode === mode
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => setMarkdownMode(mode)}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            )}
+            <span className="hidden sm:inline">
+              Modified // {new Date(note.updated_at).toLocaleString()}
+            </span>
+          </div>
         </div>
 
-        <section className="min-h-[calc(100svh-10rem)] rounded-2xl border bg-card px-5 py-7 shadow-sm sm:px-10 sm:py-10">
+        <section className="terminal-glow min-h-[calc(100svh-10rem)] rounded-lg border border-primary/15 bg-card/90 px-5 py-7 sm:px-10 sm:py-10">
           <Input
             value={title}
             onChange={(e) => {
@@ -380,9 +527,9 @@ export function NoteEditor({ note, onBack }: Props) {
             placeholder="Untitled note"
             className="h-auto rounded-none border-0 bg-transparent px-0 py-0 font-heading text-[24px] font-semibold tracking-[-0.04em] shadow-none focus-visible:ring-0 dark:bg-transparent md:text-[32px]"
           />
-          <div className="my-7 h-px bg-border" />
+          <div className="my-7 h-px bg-primary/15" />
 
-          {note.type === "markdown" ? (
+          {note.type === "markdown" && markdownMode === "edit" ? (
             <Textarea
               value={content}
               onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -392,6 +539,14 @@ export function NoteEditor({ note, onBack }: Props) {
               placeholder="Start writing..."
               className="min-h-[60vh] resize-none rounded-none border-0 bg-transparent px-0 py-0 font-mono text-[15px] leading-7 shadow-none focus-visible:ring-0 dark:bg-transparent"
             />
+          ) : note.type === "markdown" ? (
+            <div
+              role="tabpanel"
+              aria-label="Markdown preview"
+              className="markdown-preview min-h-[60vh] text-[15px] leading-7"
+            >
+              <ReactMarkdown>{content || "_Nothing here yet._"}</ReactMarkdown>
+            </div>
           ) : (
             <div className="space-y-3">
               {items.map((item, i) => {
@@ -403,11 +558,11 @@ export function NoteEditor({ note, onBack }: Props) {
                     ref={(row) => {
                       itemRowsRef.current[i] = row;
                     }}
-                    className={`group flex items-center gap-2 rounded-xl border bg-background/50 p-2 transition-[transform,box-shadow,border-color,background-color] duration-150 focus-within:border-primary/30 ${draggingIndex === i ? "relative z-10 scale-[1.015] border-primary/35 bg-card shadow-lg shadow-foreground/10" : ""}`}
+                    className={`group flex items-center gap-2 rounded-md border border-primary/10 bg-background/45 p-2 transition-[transform,box-shadow,border-color,background-color] duration-150 focus-within:border-primary/35 ${draggingIndex === i ? "relative z-10 scale-[1.015] border-primary/45 bg-card shadow-[0_0_24px_color-mix(in_oklch,var(--primary)_9%,transparent)]" : ""}`}
                   >
                     <button
                       type="button"
-                      className="grid size-8 shrink-0 touch-none cursor-grab select-none place-items-center rounded-lg text-muted-foreground/55 outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/30 active:cursor-grabbing"
+                      className="grid size-8 shrink-0 touch-none cursor-grab select-none place-items-center rounded-sm text-muted-foreground/55 outline-none transition-colors hover:bg-primary/8 hover:text-primary focus-visible:ring-2 focus-visible:ring-ring/30 active:cursor-grabbing"
                       onPointerDown={(event) => handleDragPointerDown(event, i)}
                       onPointerMove={handleDragPointerMove}
                       onPointerUp={finishDrag}
@@ -423,7 +578,7 @@ export function NoteEditor({ note, onBack }: Props) {
                     <Checkbox
                       checked={isChecked}
                       onCheckedChange={() => toggleItem(i)}
-                      className="size-5 rounded-md"
+                      className="size-5 rounded-sm"
                     />
                     <Input
                       value={text}
@@ -447,7 +602,7 @@ export function NoteEditor({ note, onBack }: Props) {
                 );
               })}
               {items.length === 0 && (
-                <div className="rounded-xl border border-dashed py-10 text-center text-sm text-muted-foreground">
+                <div className="rounded-md border border-dashed border-primary/20 py-10 text-center font-mono text-sm text-muted-foreground">
                   <Check className="mx-auto mb-3 size-5" />
                   No items yet.
                 </div>
@@ -472,4 +627,12 @@ function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
 
 function draftSignature(draft: NoteDraft): string {
   return JSON.stringify([draft.title, draft.content, draft.items]);
+}
+
+function noteToDraft(note: Note): NoteDraft {
+  return {
+    title: note.title,
+    content: note.content,
+    items: note.items ?? [],
+  };
 }

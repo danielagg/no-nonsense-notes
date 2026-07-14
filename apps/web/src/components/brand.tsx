@@ -1,4 +1,4 @@
-import { SquarePen } from "lucide-react";
+import { NotebookText } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export function Brand({
@@ -9,13 +9,13 @@ export function Brand({
   className?: string;
 }) {
   return (
-    <div className={cn("flex items-center gap-2.5", className)}>
-      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-sm shadow-primary/20">
-        <SquarePen className="size-4.5" strokeWidth={2.2} />
+    <div className={cn("flex items-center gap-3", className)}>
+      <span className="brand-mark grid size-9 shrink-0 place-items-center rounded-md border">
+        <NotebookText className="size-4.5" strokeWidth={1.8} />
       </span>
       {!compact && (
-        <span className="font-heading text-[15px] font-semibold tracking-[-0.02em]">
-          No Nonsense Notes
+        <span className="font-heading text-[13px] font-semibold uppercase tracking-[0.08em]">
+          No Nonsense <span className="brand-accent-text">/ Notes</span>
         </span>
       )}
     </div>

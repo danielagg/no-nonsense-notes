@@ -1,0 +1,16 @@
+{
+  "name": "No Nonsense Notes",
+  "short_name": "NNN",
+  "description": "A focused, local-first workspace for notes and lists.",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "theme_color": "#8cff66",
+  "background_color": "#071009",
+  "display": "standalone"
+}

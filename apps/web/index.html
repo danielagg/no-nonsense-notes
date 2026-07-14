@@ -3,9 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <link rel="mask-icon" href="/pinned-tab.svg" color="#8cff66" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#f8f8fb" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0d0e13" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#ede5cf" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#071009" media="(prefers-color-scheme: dark)" />
+    <meta name="msapplication-TileColor" content="#8cff66" />
     <script>
       const savedTheme = localStorage.getItem('nnn-theme');
       const useDarkTheme = savedTheme === 'dark' || (!savedTheme && matchMedia('(prefers-color-scheme: dark)').matches);
