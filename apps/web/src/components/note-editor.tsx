@@ -71,6 +71,9 @@ export function NoteEditor({ note, onBack }: Props) {
   const dragTimerRef = useRef<number | null>(null);
   const dragDidReorderRef = useRef(false);
   const itemRowsRef = useRef<Array<HTMLDivElement | null>>([]);
+  const itemInputRefs = useRef<Array<HTMLInputElement | null>>([]);
+  const pendingItemFocusIdRef = useRef<string | null>(null);
+  const editorRef = useRef<HTMLDivElement | null>(null);
 
   const getCurrentDraft = useCallback(
     (): NoteDraft => ({
@@ -117,12 +120,26 @@ export function NoteEditor({ note, onBack }: Props) {
     if (mountedRef.current) setSaveStatus("saved");
   }, []);
 
+  const isEditorInputFocused = useCallback(() => {
+    const activeElement = document.activeElement;
+    return (
+      (activeElement instanceof HTMLInputElement ||
+        activeElement instanceof HTMLTextAreaElement) &&
+      editorRef.current?.contains(activeElement)
+    );
+  }, []);
+
   const applyPendingRemoteNote = useCallback(() => {
     const pendingNote = pendingRemoteNoteRef.current;
-    if (!pendingNote || hasPendingLocalChangesRef.current) return;
+    if (
+      !pendingNote ||
+      hasPendingLocalChangesRef.current ||
+      isEditorInputFocused()
+    )
+      return;
     pendingRemoteNoteRef.current = null;
     applyIncomingNote(pendingNote);
-  }, [applyIncomingNote]);
+  }, [applyIncomingNote, isEditorInputFocused]);
 
   const persistDraft = useCallback(
     (draft: NoteDraft): Promise<void> => {
@@ -246,13 +263,13 @@ export function NoteEditor({ note, onBack }: Props) {
   ]);
 
   useEffect(() => {
-    if (hasPendingLocalChangesRef.current) {
+    if (hasPendingLocalChangesRef.current || isEditorInputFocused()) {
       pendingRemoteNoteRef.current = note;
       return;
     }
     pendingRemoteNoteRef.current = null;
     applyIncomingNote(note);
-  }, [note, applyIncomingNote]);
+  }, [note, applyIncomingNote, isEditorInputFocused]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -278,6 +295,32 @@ export function NoteEditor({ note, onBack }: Props) {
     saveItemsImmediately([...itemsRef.current, "[ ] "]);
     setItemIds((prev) => [...prev, `list-item-${nextItemId.current++}`]);
   }, [saveItemsImmediately]);
+
+  const insertItemAfter = useCallback(
+    (index: number) => {
+      const nextItems = [...itemsRef.current];
+      nextItems.splice(index + 1, 0, "[ ] ");
+      const itemId = `list-item-${nextItemId.current++}`;
+      pendingItemFocusIdRef.current = itemId;
+      saveItemsImmediately(nextItems);
+      setItemIds((prev) => {
+        const next = [...prev];
+        next.splice(index + 1, 0, itemId);
+        return next;
+      });
+    },
+    [saveItemsImmediately],
+  );
+
+  useEffect(() => {
+    const itemId = pendingItemFocusIdRef.current;
+    if (!itemId) return;
+    const index = itemIds.indexOf(itemId);
+    const input = itemInputRefs.current[index];
+    if (!input) return;
+    input.focus();
+    pendingItemFocusIdRef.current = null;
+  }, [itemIds]);
 
   const updateItem = useCallback((index: number, value: string) => {
     const nextItems = itemsRef.current.map((item, i) =>
@@ -436,8 +479,16 @@ export function NoteEditor({ note, onBack }: Props) {
     }
   }, [flushSave, onBack]);
 
+  const handleEditorBlur = useCallback(() => {
+    window.setTimeout(applyPendingRemoteNote, 0);
+  }, [applyPendingRemoteNote]);
+
   return (
-    <div className="terminal-grid min-h-[calc(100svh-var(--sync-banner-height))]">
+    <div
+      ref={editorRef}
+      onBlurCapture={handleEditorBlur}
+      className="terminal-grid min-h-[calc(100svh-var(--sync-banner-height))]"
+    >
       <header className="sticky top-[var(--sync-banner-height)] z-20 border-b border-primary/15 bg-background/88 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-8">
           <div className="flex items-center gap-2 sm:gap-5">
@@ -582,6 +633,9 @@ export function NoteEditor({ note, onBack }: Props) {
                       className="size-5 rounded-sm"
                     />
                     <Input
+                      ref={(input) => {
+                        itemInputRefs.current[i] = input;
+                      }}
                       value={text}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
                         const prefix = isChecked
@@ -590,6 +644,12 @@ export function NoteEditor({ note, onBack }: Props) {
                             ? "[ ] "
                             : "";
                         updateItem(i, prefix + e.target.value);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" || event.nativeEvent.isComposing)
+                          return;
+                        event.preventDefault();
+                        insertItemAfter(i);
                       }}
                       placeholder="List item"
                       className={`h-9 flex-1 border-0 bg-transparent shadow-none focus-visible:ring-0 dark:bg-transparent ${isChecked ? "text-muted-foreground line-through" : ""}`}

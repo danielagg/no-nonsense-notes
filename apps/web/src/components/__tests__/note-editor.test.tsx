@@ -198,6 +198,67 @@ describe("NoteEditor autosave", () => {
     ).toEqual(["First", ""]);
   });
 
+  it("inserts and focuses a blank checklist item after the current item on Enter", async () => {
+    const listNote: Note = {
+      ...markdownNote,
+      type: "list",
+      content: "First\nThird",
+      items: ["First", "Third"],
+    };
+    const container = renderEditor(listNote);
+    const inputs = container.querySelectorAll<HTMLInputElement>(
+      'input[placeholder="List item"]',
+    );
+
+    await act(async () => {
+      inputs[0].dispatchEvent(
+        new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
+      );
+      await Promise.resolve();
+    });
+
+    const updatedInputs = container.querySelectorAll<HTMLInputElement>(
+      'input[placeholder="List item"]',
+    );
+    expect([...updatedInputs].map((input) => input.value)).toEqual([
+      "First",
+      "",
+      "Third",
+    ]);
+    expect(document.activeElement).toBe(updatedInputs[1]);
+    expect(mocks.updateListNote).toHaveBeenCalledWith(
+      "note-1",
+      ["First", "[ ] ", "Third"],
+      null,
+    );
+  });
+
+  it("keeps focus while a stale list-note refresh arrives after autosave", async () => {
+    const onBack = vi.fn();
+    const listNote: Note = {
+      ...markdownNote,
+      type: "list",
+      content: "First",
+      items: ["First"],
+    };
+    const container = renderEditor(listNote, onBack);
+    const input = container.querySelector<HTMLInputElement>(
+      'input[placeholder="List item"]',
+    );
+    input!.focus();
+
+    act(() => changeValue(input!, "Updated first"));
+    await act(async () => {
+      vi.advanceTimersByTime(650);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    rerenderEditor(listNote, onBack);
+
+    expect(input?.value).toBe("Updated first");
+    expect(document.activeElement).toBe(input);
+  });
+
   it("flushes a pending edit before going back", async () => {
     let finishSave: (() => void) | undefined;
     mocks.updateMarkdownNote.mockImplementation(
