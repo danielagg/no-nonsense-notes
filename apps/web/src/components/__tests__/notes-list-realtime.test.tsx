@@ -43,7 +43,7 @@ describe("NotesList live updates", () => {
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <NotesList />
+          <NotesList onOpen={vi.fn()} />
         </QueryClientProvider>,
       );
     });
@@ -71,8 +71,7 @@ describe("NotesList live updates", () => {
     localStorage.removeItem("nnn-sidebar-width");
   });
 
-  it("keeps an open editor connected to refreshed query data", async () => {
-    vi.useFakeTimers();
+  it("opens a note through its supplied route handler", () => {
     (
       globalThis as typeof globalThis & {
         IS_REACT_ACT_ENVIRONMENT: boolean;
@@ -92,11 +91,12 @@ describe("NotesList live updates", () => {
     const container = document.createElement("div");
     document.body.append(container);
     const root = createRoot(container);
+    const onOpen = vi.fn();
 
     act(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <NotesList />
+          <NotesList onOpen={onOpen} />
         </QueryClientProvider>,
       );
     });
@@ -105,32 +105,12 @@ describe("NotesList live updates", () => {
     );
     act(() => openButton!.click());
 
-    const editButton = [...container.querySelectorAll<HTMLButtonElement>(
-      '[role="tab"]',
-    )].find((button) => button.textContent === "edit");
-    act(() => editButton!.click());
-
-    await act(async () => {
-      queryClient.setQueryData<Note[]>(["notes", "account-1"], [
-        {
-          ...initialNote,
-          content: "Updated from another session",
-          updated_at: "2026-07-13T14:00:01Z",
-        },
-      ]);
-      await vi.runOnlyPendingTimersAsync();
-    });
-
-    expect(
-      container.querySelector<HTMLTextAreaElement>('textarea[placeholder="Start writing..."]')
-        ?.value,
-    ).toBe("Updated from another session");
+    expect(onOpen).toHaveBeenCalledWith("note-1");
 
     act(() => {
       root.unmount();
       queryClient.clear();
     });
     container.remove();
-    vi.useRealTimers();
   });
 });

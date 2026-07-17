@@ -4,7 +4,6 @@ import { getNotes, createNote, deleteNote, type Note } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { useAuth } from "@/lib/auth";
-import { NoteEditor } from "./note-editor";
 import { Brand } from "./brand";
 import { ThemeToggle } from "./theme-toggle";
 import { ListChecks, LogOut, NotebookPen, Plus, Trash2 } from "lucide-react";
@@ -25,10 +24,13 @@ function getStoredSidebarWidth() {
     : DEFAULT_SIDEBAR_WIDTH;
 }
 
-export function NotesList() {
+interface Props {
+  onOpen: (noteId: string) => void;
+}
+
+export function NotesList({ onOpen }: Props) {
   const { logout, accountId } = useAuth();
   const queryClient = useQueryClient();
-  const [selectedNoteId, setSelectedNoteId] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(getStoredSidebarWidth);
   const [isResizingSidebar, setIsResizingSidebar] = useState(false);
   const resizeStart = useRef<{ x: number; width: number } | null>(null);
@@ -55,9 +57,6 @@ export function NotesList() {
     queryKey: ["notes", accountId],
     queryFn: getNotes,
   });
-  const selectedNote = selectedNoteId
-    ? notes.find((note) => note.id === selectedNoteId)
-    : null;
 
   const createMutation = useMutation({
     mutationFn: (type: "markdown" | "list") =>
@@ -71,15 +70,8 @@ export function NotesList() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["notes"] });
-      setSelectedNoteId(null);
     },
   });
-
-  if (selectedNote) {
-    return (
-      <NoteEditor note={selectedNote} onBack={() => setSelectedNoteId(null)} />
-    );
-  }
 
   return (
     <div
@@ -226,7 +218,7 @@ export function NotesList() {
                   <NoteCard
                     key={note.id}
                     note={note}
-                    onOpen={() => setSelectedNoteId(note.id)}
+                    onOpen={() => onOpen(note.id)}
                     onDelete={() => deleteMutation.mutate(note.id)}
                   />
                 ))}

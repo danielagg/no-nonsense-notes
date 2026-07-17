@@ -1,6 +1,7 @@
 package app.nononsense.notes.ui
 
 import android.app.Activity
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -231,6 +232,7 @@ private fun NoteEditor(note: NoteRecord, dark: Boolean, toggleTheme: () -> Unit,
         delay(650)
         if (note.kind == NoteKind.MARKDOWN) saveMarkdown(note, title, content) else saveList(note, title, listItems)
     }
+    BackHandler(onBack = back)
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().height(66.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(back) { Icon(Icons.Default.ArrowBack, "Back") }; Brand(compact = true)

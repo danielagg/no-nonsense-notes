@@ -1,5 +1,12 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type MutableRefObject,
+} from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useBlocker } from "@tanstack/react-router";
 import ReactMarkdown from "react-markdown";
 import { updateMarkdownNote, updateListNote, type Note } from "@/lib/api";
 import { Button } from "@/components/ui/button";
@@ -22,6 +29,7 @@ import { ThemeToggle } from "./theme-toggle";
 interface Props {
   note: Note;
   onBack: () => void;
+  blockNavigation?: boolean;
 }
 
 interface NoteDraft {
@@ -36,7 +44,7 @@ type MarkdownMode = "edit" | "preview";
 const AUTOSAVE_DELAY_MS = 650;
 const AUTOSAVE_MAX_WAIT_MS = 1_200;
 
-export function NoteEditor({ note, onBack }: Props) {
+export function NoteEditor({ note, onBack, blockNavigation = false }: Props) {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
@@ -74,6 +82,7 @@ export function NoteEditor({ note, onBack }: Props) {
   const itemInputRefs = useRef<Array<HTMLInputElement | null>>([]);
   const pendingItemFocusIdRef = useRef<string | null>(null);
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const allowNavigationRef = useRef(false);
 
   const getCurrentDraft = useCallback(
     (): NoteDraft => ({
@@ -473,6 +482,7 @@ export function NoteEditor({ note, onBack }: Props) {
   const handleBack = useCallback(async () => {
     try {
       await flushSave();
+      allowNavigationRef.current = true;
       onBack();
     } catch {
       // Keep the editor open so the visible retry action can recover the save.
@@ -489,6 +499,12 @@ export function NoteEditor({ note, onBack }: Props) {
       onBlurCapture={handleEditorBlur}
       className="terminal-grid min-h-[calc(100svh-var(--sync-banner-height))]"
     >
+      {blockNavigation && (
+        <NavigationBlocker
+          onBack={handleBack}
+          allowNavigationRef={allowNavigationRef}
+        />
+      )}
       <header className="sticky top-[var(--sync-banner-height)] z-20 border-b border-primary/15 bg-background/88 backdrop-blur-xl">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-8">
           <div className="flex items-center gap-2 sm:gap-5">
@@ -681,6 +697,28 @@ export function NoteEditor({ note, onBack }: Props) {
       </main>
     </div>
   );
+}
+
+function NavigationBlocker({
+  onBack,
+  allowNavigationRef,
+}: {
+  onBack: () => Promise<void>;
+  allowNavigationRef: MutableRefObject<boolean>;
+}) {
+  useBlocker({
+    shouldBlockFn: () => {
+      if (allowNavigationRef.current) {
+        allowNavigationRef.current = false;
+        return false;
+      }
+      void onBack();
+      return true;
+    },
+    enableBeforeUnload: false,
+  });
+
+  return null;
 }
 
 function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
