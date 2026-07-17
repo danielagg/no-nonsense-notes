@@ -153,9 +153,49 @@ describe("NoteEditor autosave", () => {
     });
     expect(mocks.updateListNote).toHaveBeenCalledWith(
       "note-1",
-      ["First", ""],
+      ["First", "[ ] "],
       null,
     );
+    expect(
+      [...container.querySelectorAll<HTMLInputElement>('input[placeholder="List item"]')].map(
+        (input) => input.value,
+      ),
+    ).toEqual(["First", ""]);
+  });
+
+  it("keeps a newly added blank checklist item after the saved note refreshes", async () => {
+    const onBack = vi.fn();
+    const listNote: Note = {
+      ...markdownNote,
+      type: "list",
+      content: "First",
+      items: ["First"],
+    };
+    const container = renderEditor(listNote, onBack);
+    const addButton = [...container.querySelectorAll("button")].find((button) =>
+      button.textContent?.includes("Add item"),
+    );
+
+    await act(async () => {
+      addButton!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    rerenderEditor(
+      {
+        ...listNote,
+        content: "First\n[ ] ",
+        items: ["First", "[ ] "],
+        updated_at: "2026-07-13T12:01:00Z",
+      },
+      onBack,
+    );
+
+    expect(
+      [...container.querySelectorAll<HTMLInputElement>('input[placeholder="List item"]')].map(
+        (input) => input.value,
+      ),
+    ).toEqual(["First", ""]);
   });
 
   it("flushes a pending edit before going back", async () => {

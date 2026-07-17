@@ -21,11 +21,5 @@
         android:strokeColor="@color/brand_neon"
         android:strokeWidth="3"
         android:strokeLineCap="square" />
-    <path
-        android:pathData="M28,34 L28,22 L40,22 M68,86 L80,86 L80,74"
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="@color/brand_neon"
-        android:strokeAlpha="0.48"
-        android:strokeWidth="2" />
 </vector>
 

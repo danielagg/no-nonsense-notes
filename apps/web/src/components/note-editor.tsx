@@ -41,7 +41,7 @@ export function NoteEditor({ note, onBack }: Props) {
   const [title, setTitle] = useState(note.title);
   const [content, setContent] = useState(note.content);
   const [items, setItems] = useState(note.items ?? []);
-  const [markdownMode, setMarkdownMode] = useState<MarkdownMode>("preview");
+  const [markdownMode, setMarkdownMode] = useState<MarkdownMode>("edit");
   const titleRef = useRef(note.title);
   const contentRef = useRef(note.content);
   const itemsRef = useRef(note.items ?? []);
@@ -275,7 +275,7 @@ export function NoteEditor({ note, onBack }: Props) {
   );
 
   const addItem = useCallback(() => {
-    saveItemsImmediately([...itemsRef.current, ""]);
+    saveItemsImmediately([...itemsRef.current, "[ ] "]);
     setItemIds((prev) => [...prev, `list-item-${nextItemId.current++}`]);
   }, [saveItemsImmediately]);
 
@@ -300,7 +300,8 @@ export function NoteEditor({ note, onBack }: Props) {
       saveItemsImmediately(
         itemsRef.current.map((item, i) => {
           if (i !== index) return item;
-          return item.startsWith("[x] ") ? item.slice(4) : `[x] ${item}`;
+          const { isChecked, text } = parseListItem(item);
+          return `${isChecked ? "[ ]" : "[x]"} ${text}`;
         }),
       );
     },
@@ -550,8 +551,8 @@ export function NoteEditor({ note, onBack }: Props) {
           ) : (
             <div className="space-y-3">
               {items.map((item, i) => {
-                const isChecked = item.startsWith("[x] ");
-                const text = isChecked ? item.slice(4) : item;
+                const { isChecked, text, hasCheckboxPrefix } =
+                  parseListItem(item);
                 return (
                   <div
                     key={itemIds[i]}
@@ -583,7 +584,11 @@ export function NoteEditor({ note, onBack }: Props) {
                     <Input
                       value={text}
                       onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
-                        const prefix = isChecked ? "[x] " : "";
+                        const prefix = isChecked
+                          ? "[x] "
+                          : hasCheckboxPrefix
+                            ? "[ ] "
+                            : "";
                         updateItem(i, prefix + e.target.value);
                       }}
                       placeholder="List item"
@@ -635,4 +640,18 @@ function noteToDraft(note: Note): NoteDraft {
     content: note.content,
     items: note.items ?? [],
   };
+}
+
+function parseListItem(item: string): {
+  isChecked: boolean;
+  text: string;
+  hasCheckboxPrefix: boolean;
+} {
+  if (item.startsWith("[x] ")) {
+    return { isChecked: true, text: item.slice(4), hasCheckboxPrefix: true };
+  }
+  if (item.startsWith("[ ] ")) {
+    return { isChecked: false, text: item.slice(4), hasCheckboxPrefix: true };
+  }
+  return { isChecked: false, text: item, hasCheckboxPrefix: false };
 }
