@@ -233,6 +233,53 @@ describe("NoteEditor autosave", () => {
     );
   });
 
+  it("keeps dragging after a reordered row loses pointer capture", async () => {
+    const listNote: Note = {
+      ...markdownNote,
+      type: "list",
+      content: "First\nSecond\nThird",
+      items: ["First", "Second", "Third"],
+    };
+    const container = renderEditor(listNote);
+    const rows = [
+      ...container.querySelectorAll<HTMLElement>("[data-checklist-row]"),
+    ];
+    rows.forEach((row) => {
+      vi.spyOn(row, "getBoundingClientRect").mockImplementation(() => {
+        const currentRows = [
+          ...container.querySelectorAll<HTMLElement>("[data-checklist-row]"),
+        ];
+        const index = currentRows.indexOf(row);
+        return { top: 200 + index * 40, height: 40 } as DOMRect;
+      });
+    });
+    const firstHandle = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Reorder item 1"]',
+    );
+
+    act(() => {
+      firstHandle!.dispatchEvent(pointerEvent("pointerdown", 1, 220));
+      window.dispatchEvent(pointerEvent("pointermove", 1, 260));
+    });
+    expect(listItemValues(container)).toEqual(["Second", "First", "Third"]);
+
+    act(() => {
+      firstHandle!.dispatchEvent(pointerEvent("lostpointercapture", 1, 260));
+      window.dispatchEvent(pointerEvent("pointermove", 1, 300));
+    });
+    expect(listItemValues(container)).toEqual(["Second", "Third", "First"]);
+
+    await act(async () => {
+      window.dispatchEvent(pointerEvent("pointerup", 1, 300));
+      await Promise.resolve();
+    });
+    expect(mocks.updateListNote).toHaveBeenCalledWith(
+      "note-1",
+      ["Second", "Third", "First"],
+      null,
+    );
+  });
+
   it("keeps focus while a stale list-note refresh arrives after autosave", async () => {
     const onBack = vi.fn();
     const listNote: Note = {
@@ -434,4 +481,22 @@ function changeValue(element: HTMLInputElement | HTMLTextAreaElement, value: str
   const setter = Object.getOwnPropertyDescriptor(prototype, "value")?.set;
   setter?.call(element, value);
   element.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+function listItemValues(container: HTMLDivElement) {
+  return [
+    ...container.querySelectorAll<HTMLInputElement>(
+      'input[placeholder="List item"]',
+    ),
+  ].map((input) => input.value);
+}
+
+function pointerEvent(type: string, pointerId: number, clientY: number) {
+  const event = new MouseEvent(type, { bubbles: true, button: 0, clientY });
+  Object.defineProperties(event, {
+    pointerId: { value: pointerId },
+    pointerType: { value: "mouse" },
+    isPrimary: { value: true },
+  });
+  return event;
 }
