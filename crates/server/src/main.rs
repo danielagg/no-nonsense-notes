@@ -13,7 +13,11 @@ use no_nonsense_notes_server::{AppState, auth, storage, sync};
 
 #[derive(OpenApi)]
 #[openapi(
-    paths(auth::signup, auth::signin, sync::ws_handler),
+    paths(
+        auth::handlers::signup::signup,
+        auth::handlers::signin::signin,
+        sync::ws_handler
+    ),
     components(schemas(auth::SignupRequest, auth::SigninRequest, auth::AuthResponse)),
     info(title = "No Nonsense Notes API", version = "0.1.0")
 )]

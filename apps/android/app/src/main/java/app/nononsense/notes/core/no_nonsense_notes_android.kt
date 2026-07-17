@@ -868,43 +868,43 @@ private fun uniffiCheckContractApiVersion(lib: IntegrityCheckingUniffiLib) {
 }
 @Suppress("UNUSED_PARAMETER")
 private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_create_note() != 19776) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_create_note() != 58662) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_delete_note() != 12273) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_delete_note() != 46173) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_get_note() != 58029) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_get_note() != 5959) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_list_notes() != 343) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_list_notes() != 20394) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_search_notes() != 16498) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_search_notes() != 31095) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_update_list() != 63647) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_update_list() != 42728) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_update_markdown() != 58007) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_notesstore_update_markdown() != 60900) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncdelegate_state_changed() != 60389) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncdelegate_state_changed() != 44173) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncdelegate_notes_changed() != 52615) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncdelegate_notes_changed() != 4546) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncsession_stop() != 54428) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncsession_stop() != 5118) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncsession_wake() != 40141) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_method_syncsession_wake() != 27261) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_constructor_notesstore_open() != 17201) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_constructor_notesstore_open() != 46242) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
-    if (lib.uniffi_no_nonsense_notes_android_checksum_constructor_syncsession_start() != 30957) {
+    if (lib.uniffi_no_nonsense_notes_android_checksum_constructor_syncsession_start() != 27759) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
 }
