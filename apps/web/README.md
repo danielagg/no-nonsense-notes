@@ -1,32 +1,40 @@
-# React + TypeScript + Vite
+# Web app
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+The React and TypeScript client. It uses the shared Rust core through
+`wasm-bindgen`, keeps local notes in the WASM `MemoryStore`, persists them to
+`localStorage`, and connects to the Rust sync server.
 
-Currently, two official plugins are available:
+## Run locally
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Set `VITE_API_URL` using [`.env.example`](.env.example), then run this from the
+repository root:
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```sh
+./scripts/web.sh
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+The script builds [`crates/wasm`](../../crates/wasm/README.md), copies the
+generated package into `src/lib/wasm-pkg/`, and starts both the server and Vite.
+
+## Commands
+
+From `apps/web`:
+
+```sh
+npm install
+npm run dev
+npm run lint
+npm run test
+npm run build
+npm run preview
+```
+
+Running Vite directly assumes `src/lib/wasm-pkg/` has already been generated.
+Use `scripts/web.sh` after Rust or WASM API changes.
+
+## Structure
+
+- `src/components/` contains the auth, note-list, and editor UI.
+- `src/lib/wasm.ts` wraps the generated WASM API.
+- `src/lib/sync-manager.ts` owns the browser WebSocket connection.
+- `src/lib/wasm-pkg/` is generated and should not be edited manually.
